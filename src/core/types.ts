@@ -23,6 +23,10 @@ export interface MediaElements {
     remoteElement?: HTMLMediaElement;
 }
 
+export interface AnswerOptions extends MediaElements {
+    video?: boolean;
+}
+
 export interface CallOptions extends MediaElements {
     destination: string;
     video?: boolean;

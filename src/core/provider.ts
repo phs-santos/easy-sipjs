@@ -1,4 +1,4 @@
-import { SipCredentials, CallOptions, MediaElements } from "./types";
+import { SipCredentials, CallOptions, MediaElements, AnswerOptions } from "./types";
 
 export interface ISipProvider {
     register(
@@ -9,18 +9,19 @@ export interface ISipProvider {
     ): Promise<void>;
 
     call(options: CallOptions): Promise<ISipSession>;
-    answer(invitation: any, options: MediaElements): Promise<ISipSession>;
+    answer(invitation: any, options: AnswerOptions): Promise<ISipSession>;
     unregister(): Promise<void>;
 }
+
 
 export interface ISipSession {
     onTerminate?: () => void;
     bye(): Promise<void>;
     mute(): void;
     unmute(): void;
+    muteVideo(): void;
+    unmuteVideo(): void;
     hold(): Promise<void>;
     unhold(): Promise<void>;
     transfer(target: string | ISipSession): Promise<void>;
-    // In the future, we can add more implementation-agnostic methods here
-    // like mute(), hold(), etc.
 }

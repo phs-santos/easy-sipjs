@@ -8,6 +8,7 @@ import type {
     Referral,
     Subscription,
     MediaElements,
+    AnswerOptions,
 } from "./core/types";
 import {
     IncomingReferRequest,
@@ -53,6 +54,13 @@ export class SipClient {
      */
     public onSipLog?: (level: string, category: string, label: string, content: string) => void;
 
+    /**
+     * Identifica se uma chamada recebida (Invitation) possui vídeo.
+     */
+    public static isVideoCall(invitation: Invitation): boolean {
+        return SipJSProvider.isVideoCall(invitation);
+    }
+
     constructor(private credentials: SipCredentials, provider?: ISipProvider) {
         this.provider = provider ?? new SipJSProvider();
     }
@@ -79,7 +87,7 @@ export class SipClient {
         return session;
     }
 
-    async answer(invitation: Invitation, options: MediaElements) {
+    async answer(invitation: Invitation, options: AnswerOptions) {
         const session = await this.provider.answer(invitation, options);
         this.session = session;
         return session;
@@ -91,6 +99,14 @@ export class SipClient {
 
     async unmute() {
         this.session?.unmute();
+    }
+
+    async muteVideo() {
+        this.session?.muteVideo();
+    }
+
+    async unmuteVideo() {
+        this.session?.unmuteVideo();
     }
 
     async hold() {

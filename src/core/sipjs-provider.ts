@@ -1,7 +1,7 @@
 import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session, Invitation } from "sip.js";
 import { OutgoingRequestDelegate } from "sip.js/lib/core";
 import { ISipProvider, ISipSession } from "./provider";
-import { SipCredentials, CallOptions, SipRegisterResult, MediaElements } from "./types";
+import { SipCredentials, CallOptions, SipRegisterResult, MediaElements, AnswerOptions } from "./types";
 import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
@@ -27,6 +27,14 @@ export class SipJSSession implements ISipSession {
 
     unmute(): void {
         this.toggleAudioTracks(true);
+    }
+
+    muteVideo(): void {
+        this.toggleVideoTracks(false);
+    }
+
+    unmuteVideo(): void {
+        this.toggleVideoTracks(true);
     }
 
     async hold(): Promise<void> {
@@ -67,6 +75,16 @@ export class SipJSSession implements ISipSession {
         if (handler && (handler as any).localMediaStream) {
             const stream = (handler as any).localMediaStream as MediaStream;
             stream.getAudioTracks().forEach(track => {
+                track.enabled = enabled;
+            });
+        }
+    }
+
+    private toggleVideoTracks(enabled: boolean): void {
+        const handler = this.session.sessionDescriptionHandler;
+        if (handler && (handler as any).localMediaStream) {
+            const stream = (handler as any).localMediaStream as MediaStream;
+            stream.getVideoTracks().forEach(track => {
                 track.enabled = enabled;
             });
         }
@@ -159,12 +177,12 @@ export class SipJSProvider implements ISipProvider {
         return sipSession;
     }
 
-    async answer(invitation: Invitation, options: MediaElements): Promise<ISipSession> {
+    async answer(invitation: Invitation, options: AnswerOptions): Promise<ISipSession> {
         if (!this.userAgent) {
             throw new Error("UserAgent not initialized. Call register() first.");
         }
 
-        const { localElement, remoteElement } = options;
+        const { localElement, remoteElement, video } = options;
         const sipSession = new SipJSSession(invitation);
 
         handleStateChanges(
@@ -175,10 +193,20 @@ export class SipJSProvider implements ISipProvider {
         );
 
         await invitation.accept({
-            sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+            sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
         });
 
         return sipSession;
+    }
+
+    /**
+     * Helper to identify if an invitation has video
+     */
+    public static isVideoCall(invitation: Invitation): boolean {
+        const body = invitation.request.body;
+        if (!body) return false;
+        // Check if SDP contains m=video and it's not disabled (port 0)
+        return body.includes("m=video") && !body.includes("m=video 0");
     }
 
     async unregister(): Promise<void> {
