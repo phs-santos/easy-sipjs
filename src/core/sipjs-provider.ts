@@ -5,6 +5,7 @@ import { SipCredentials, CallOptions, SipRegisterResult } from "./types";
 import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
+    public onTerminate?: () => void;
     constructor(private session: Session) { }
 
     async bye(): Promise<void> {
@@ -19,7 +20,8 @@ export class SipJSProvider implements ISipProvider {
     async register(
         credentials: SipCredentials,
         onUserAgent: UserAgentDelegate,
-        onRegister: OutgoingRequestDelegate
+        onRegister: OutgoingRequestDelegate,
+        onSipLog?: (level: string, category: string, label: string, content: string) => void
     ): Promise<void> {
         const {
             domain,
@@ -42,7 +44,13 @@ export class SipJSProvider implements ISipProvider {
             userAgentString,
             contactParams: { transport: "wss" },
             delegate: onUserAgent,
-            logLevel: "debug",
+            logLevel: "error",
+            // logLevel: "debug",
+            logConnector: (level: string, category: string, label: string | undefined, content: string) => {
+                if (onSipLog) {
+                    onSipLog(level, category, label || "", content);
+                }
+            }
         });
 
         // Forçar o Contact a ser o mesmo da AOR (uri) ajuda o SIP.js a reconhecer 
@@ -75,14 +83,20 @@ export class SipJSProvider implements ISipProvider {
         if (!target) throw new Error("Invalid destination URI");
 
         const inviter = new Inviter(this.userAgent, target);
+        const sipSession = new SipJSSession(inviter);
 
-        handleStateChanges(inviter, localElement, remoteElement);
+        handleStateChanges(
+            inviter,
+            localElement,
+            remoteElement,
+            () => { if (sipSession.onTerminate) sipSession.onTerminate(); }
+        );
 
         await inviter.invite({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
         });
 
-        return new SipJSSession(inviter);
+        return sipSession;
     }
 
     async unregister(): Promise<void> {

@@ -46,6 +46,12 @@ export class SipClient {
         onRedirect: () => { },
     };
 
+    /**
+     * Callback for SIP signaling logs.
+     * Useful for debugging and showing messages in a console.
+     */
+    public onSipLog?: (level: string, category: string, label: string, content: string) => void;
+
     constructor(private credentials: SipCredentials, provider?: ISipProvider) {
         this.provider = provider ?? new SipJSProvider();
     }
@@ -54,7 +60,8 @@ export class SipClient {
         await this.provider.register(
             this.credentials,
             this.onUserAgent,
-            this.onRegister
+            this.onRegister,
+            this.onSipLog
         );
 
         // Return compatibility object for legacy use

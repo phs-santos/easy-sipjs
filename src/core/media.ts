@@ -3,7 +3,8 @@ import { SessionState, Web, Session } from "sip.js";
 export function handleStateChanges(
     session: Session,
     local?: HTMLMediaElement,
-    remote?: HTMLMediaElement
+    remote?: HTMLMediaElement,
+    onTerminate?: () => void
 ): void {
     session.stateChange.addListener((state: SessionState) => {
         switch (state) {
@@ -17,6 +18,7 @@ export function handleStateChanges(
                 break;
             case SessionState.Terminated:
                 console.log("Session terminated");
+                if (onTerminate) onTerminate();
                 break;
         }
     });
