@@ -1,5 +1,3 @@
-import { register } from "./core/register";
-import { call } from "./core/call";
 import type {
     SipCredentials,
     CallOptions,
@@ -9,7 +7,6 @@ import type {
     Notification,
     Referral,
     Subscription,
-    Session,
 } from "./core/types";
 import {
     IncomingReferRequest,
@@ -18,17 +15,19 @@ import {
     OutgoingRequestDelegate,
 } from "sip.js/lib/core";
 import { UserAgentDelegate } from "sip.js";
+import { ISipProvider, ISipSession } from "./core/provider";
+import { SipJSProvider } from "./core/sipjs-provider";
 
 export class SipClient {
-    private userAgent?: SipRegisterResult["userAgent"];
-    private registerer?: SipRegisterResult["registerer"];
-    private session?: Session;
+    private session?: ISipSession;
+    private provider: ISipProvider;
 
     public onUserAgent: UserAgentDelegate = {
         onConnect: () => { },
         onDisconnect: (error: Error) => { },
         onInvite: (invitation: Invitation) => {
-            this.session = invitation;
+            // This is specific to SIP.js provider for now to maintain compatibility
+            // but the internal session is managed via ISipSession
         },
         onMessage: (message: Message) => { },
         onNotify: (notification: Notification) => { },
@@ -47,27 +46,29 @@ export class SipClient {
         onRedirect: () => { },
     };
 
-    constructor(private credentials: SipCredentials) { }
+    constructor(private credentials: SipCredentials, provider?: ISipProvider) {
+        this.provider = provider ?? new SipJSProvider();
+    }
 
     async register(): Promise<SipRegisterResult> {
-        const result = await register(
+        await this.provider.register(
             this.credentials,
             this.onUserAgent,
             this.onRegister
         );
-        this.userAgent = result.userAgent;
-        this.registerer = result.registerer;
-        return result;
+
+        // Return compatibility object for legacy use
+        const sipjsProvider = this.provider as SipJSProvider;
+        return {
+            userAgent: sipjsProvider.getUserAgent()!,
+            registerer: sipjsProvider.getRegisterer()!,
+        };
     }
 
     async call(options: Omit<CallOptions, "userAgent">) {
-        if (!this.userAgent)
-            throw new Error(
-                "UserAgent not initialized. Call register() first."
-            );
-        const inviter = await call(this.userAgent, options);
-        this.session = inviter;
-        return inviter;
+        const session = await this.provider.call(options);
+        this.session = session;
+        return session;
     }
 
     async hangup() {
@@ -78,15 +79,11 @@ export class SipClient {
     }
 
     async unregister() {
-        if (this.registerer) {
-            await this.registerer.unregister();
-            this.registerer = undefined;
-        }
-        if (this.userAgent) {
-            await this.userAgent.stop();
-            this.userAgent = undefined;
-        }
+        await this.provider.unregister();
+        this.session = undefined;
     }
 }
 
 export * from "./core/types";
+export * from "./core/provider";
+export * from "./core/sipjs-provider";
