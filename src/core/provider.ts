@@ -24,4 +24,5 @@ export interface ISipSession {
     hold(): Promise<void>;
     unhold(): Promise<void>;
     transfer(target: string | ISipSession): Promise<void>;
+    setAudioOutput(deviceId: string): Promise<void>;
 }

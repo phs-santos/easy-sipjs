@@ -6,7 +6,14 @@ import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
     public onTerminate?: () => void;
+    private remoteElement?: HTMLMediaElement;
+
     constructor(private session: Session) { }
+
+    /** @internal */
+    setRemoteElement(el: HTMLMediaElement) {
+        this.remoteElement = el;
+    }
 
     async bye(): Promise<void> {
         const state = this.session.state;
@@ -67,6 +74,15 @@ export class SipJSSession implements ISipSession {
             const otherSession = (target as any).session;
             if (!otherSession) throw new Error("Invalid transfer target session");
             await this.session.refer(otherSession);
+        }
+    }
+
+    async setAudioOutput(deviceId: string): Promise<void> {
+        if (!this.remoteElement) return;
+        if (typeof (this.remoteElement as any).setSinkId === 'function') {
+            await (this.remoteElement as any).setSinkId(deviceId);
+        } else {
+            console.warn("setSinkId is not supported in this browser");
         }
     }
 
@@ -162,6 +178,7 @@ export class SipJSProvider implements ISipProvider {
 
         const inviter = new Inviter(this.userAgent, target);
         const sipSession = new SipJSSession(inviter);
+        if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
         handleStateChanges(
             inviter,
@@ -184,6 +201,7 @@ export class SipJSProvider implements ISipProvider {
 
         const { localElement, remoteElement, video } = options;
         const sipSession = new SipJSSession(invitation);
+        if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
         handleStateChanges(
             invitation,

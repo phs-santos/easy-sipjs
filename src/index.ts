@@ -121,6 +121,10 @@ export class SipClient {
         await this.session?.transfer(target);
     }
 
+    async setAudioOutput(deviceId: string) {
+        await this.session?.setAudioOutput(deviceId);
+    }
+
     async hangup() {
         if (this.session) {
             await this.session.bye();

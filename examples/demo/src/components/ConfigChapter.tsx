@@ -17,7 +17,14 @@ interface ConfigChapterProps {
  * Mostra ao dev como o objeto de configuração do SipClient é mapeado
  * diretamente para os inputs da UI.
  */
+import { useSip } from '../services/useSip';
+
 export const ConfigChapter: React.FC<ConfigChapterProps> = ({ credentials, setCredentials, onNext }) => {
+    const { audioDevices, selectedOutputDeviceId, refreshAudioDevices, setAudioOutputDevice } = useSip();
+
+    React.useEffect(() => {
+        refreshAudioDevices();
+    }, []);
     return (
         <section className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
             <div className="space-y-2">
@@ -48,6 +55,34 @@ export const ConfigChapter: React.FC<ConfigChapterProps> = ({ credentials, setCr
                             <input className="w-full bg-[#282a36] border border-[#6272a4]/40 rounded-2xl px-5 py-4 text-sm focus:border-[#bd93f9] outline-none transition-all shadow-inner" value={credentials.server} onChange={e => setCredentials({ ...credentials, server: e.target.value })} />
                         </div>
                     </div>
+                </div>
+
+                {/* Audio Output Selector */}
+                <div className="pt-6 border-t border-[#6272a4]/10">
+                    <div className="flex items-center justify-between mb-4">
+                        <label className="text-[10px] text-[#6272a4] uppercase font-bold tracking-widest">Saída de Áudio (Speaker)</label>
+                        <button
+                            onClick={() => refreshAudioDevices()}
+                            className="text-[9px] font-black text-[#6272a4] hover:text-[#bd93f9] uppercase tracking-widest transition-colors"
+                        >
+                            Atualizar Lista 🔄
+                        </button>
+                    </div>
+                    <select
+                        className="w-full bg-[#282a36] border border-[#6272a4]/40 rounded-2xl px-5 py-4 text-sm focus:border-[#bd93f9] outline-none transition-all shadow-inner text-[#f8f8f2] appearance-none cursor-pointer"
+                        value={selectedOutputDeviceId}
+                        onChange={(e) => setAudioOutputDevice(e.target.value)}
+                    >
+                        <option value="default">Dispositivo Padrão do Sistema</option>
+                        {audioDevices.map(device => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                                {device.label || `Device ${device.deviceId.substring(0, 5)}...`}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="mt-3 text-[10px] text-[#6272a4] leading-relaxed italic">
+                        * O navegador pode solicitar permissão de microfone para listar os nomes dos alto-falantes.
+                    </p>
                 </div>
 
                 <div className="p-8 bg-[#282a36] rounded-3xl font-mono text-[13px] leading-relaxed text-[#6272a4] border border-[#6272a4]/10 shadow-inner relative overflow-hidden group">

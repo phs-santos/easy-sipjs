@@ -13,6 +13,7 @@ export interface ManagedSession {
     id: string;
     remoteUser: string;
     status: 'calling' | 'active' | 'on-hold';
+    withVideo: boolean;
 }
 
 export interface Credentials {
@@ -20,4 +21,5 @@ export interface Credentials {
     phone: string;
     secret: string;
     server: string;
+    audioOutputDeviceId?: string;
 }

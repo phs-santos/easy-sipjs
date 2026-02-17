@@ -39,11 +39,16 @@ interface CallChapterProps {
  * - Múltiplas sessões são gerenciadas através de um Array, onde o desenvolvedor
  *   coordena qual sessão está ativa e quais estão em espera (`hold()`).
  */
+import { useSip } from '../services/useSip';
+
 export const CallChapter: React.FC<CallChapterProps> = ({
     connectionState, destination, setDestination, handleCall, handleHangup,
     callActive, incomingInvitation, handleAnswer, masterRemoteVideoRef, masterLocalVideoRef,
     sessions, activeSessionId, switchSession, isMuted, isMutedVideo, isOnHold, onMute, onMuteVideo, onHold
 }) => {
+    const { audioDevices, selectedOutputDeviceId, refreshAudioDevices, setAudioOutputDevice } = useSip();
+    const activeSession = sessions.find(s => s.id === activeSessionId);
+
     const viewRemoteRef = React.useRef<HTMLVideoElement>(null);
     const viewLocalRef = React.useRef<HTMLVideoElement>(null);
 
@@ -66,13 +71,13 @@ export const CallChapter: React.FC<CallChapterProps> = ({
         sync();
         return () => clearInterval(interval);
     }, [callActive, masterRemoteVideoRef, masterLocalVideoRef]);
-    const isIncomingVideo = incomingInvitation && (SipClient as any).isVideoCall ? SipClient.isVideoCall(incomingInvitation) : false;
-    // Fallback detection logic if static helper is not globally available in this context yet
-    const detectVideoFallback = (inv: Invitation) => {
-        const body = (inv.request as any).body;
-        return body && body.includes("m=video") && !body.includes("m=video 0");
-    };
-    const incomingHasVideo = incomingInvitation ? detectVideoFallback(incomingInvitation) : false;
+
+    React.useEffect(() => {
+        if (callActive) refreshAudioDevices();
+    }, [callActive]);
+
+    const incomingHasVideo = incomingInvitation ? ((SipClient as any).isVideoCall?.(incomingInvitation) || false) : false;
+
     return (
         <section className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
             <div className="space-y-2">
@@ -83,7 +88,7 @@ export const CallChapter: React.FC<CallChapterProps> = ({
 
             <div className="grid grid-cols-12 gap-8">
                 {/* Dial Pad Area */}
-                <div className="col-span-5 bg-[#1e1f29] rounded-[2.5rem] p-10 border border-[#6272a4]/20 shadow-2xl space-y-8 self-start">
+                <div className="col-span-12 lg:col-span-5 bg-[#1e1f29] rounded-[2.5rem] p-10 border border-[#6272a4]/20 shadow-2xl space-y-8 self-start">
                     <div className="bg-[#282a36] rounded-3xl p-6 border border-[#6272a4]/30 shadow-inner group">
                         <label className="text-[9px] text-[#6272a4] uppercase font-black block mb-3 tracking-[0.3em] text-center group-hover:text-[#8be9fd] transition-colors">Discar Para</label>
                         <input
@@ -117,6 +122,24 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                             </button>
                         )}
                     </div>
+
+                    <div className="space-y-4 pt-4">
+                        <div className="flex items-center justify-between">
+                            <label className="text-[9px] text-[#6272a4] uppercase font-black tracking-widest">Saída de Áudio</label>
+                            <button onClick={() => refreshAudioDevices()} className="text-[8px] text-[#bd93f9] hover:underline font-bold uppercase transition-all">Refresh 🔄</button>
+                        </div>
+                        <select
+                            className="w-full bg-[#282a36] border border-[#6272a4]/30 rounded-xl px-4 py-3 text-[11px] text-[#f8f8f2] outline-none focus:border-[#bd93f9] shadow-inner appearance-none cursor-pointer"
+                            value={selectedOutputDeviceId}
+                            onChange={(e) => setAudioOutputDevice(e.target.value)}
+                        >
+                            <option value="default">Alto-falante Padrão</option>
+                            {audioDevices.map(d => (
+                                <option key={d.deviceId} value={d.deviceId}>{d.label || `Speaker ${d.deviceId.substring(0, 5)}`}</option>
+                            ))}
+                        </select>
+                    </div>
+
                     <div className="bg-[#282a36]/50 p-6 rounded-2xl font-mono text-[11px] text-[#6272a4] leading-relaxed border border-[#6272a4]/10">
                         <div className="text-[#ff79c6] mb-1 italic">// Apenas um comando</div>
                         <div className="text-[#bd93f9]">await <span className="text-[#f8f8f2]">client</span>.<span className="text-[#8be9fd]">call</span>({'{'}</div>
@@ -127,7 +150,7 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                 </div>
 
                 {/* Call Management Info */}
-                <div className="col-span-7 space-y-6">
+                <div className="col-span-12 lg:col-span-7 space-y-6">
                     {incomingInvitation && (
                         <div className="bg-gradient-to-r from-[#bd93f9] to-[#ff79c6] text-[#282a36] p-8 rounded-[2rem] animate-[bounce_2s_infinite] flex items-center justify-between shadow-2xl border-4 border-white/20">
                             <div>
@@ -148,9 +171,9 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                         </div>
                     )}
 
-                    <div className="bg-[#282a36] rounded-[2.5rem] border border-[#6272a4]/30 overflow-hidden shadow-2xl min-h-[400px] max-h-[800px] flex flex-col relative group/video">
-                        {/* Video Stage (Responsive Aspect Ratio) */}
-                        {callActive && (
+                    <div className="bg-[#282a36] rounded-[2.5rem] border border-[#6272a4]/30 overflow-hidden shadow-2xl min-h-[400px] flex flex-col relative group/video">
+                        {/* Video Stage (Conditional) */}
+                        {callActive && activeSession?.withVideo && (
                             <div className="relative w-full aspect-video bg-black/40 overflow-hidden border-b border-[#6272a4]/20 flex items-center justify-center">
                                 {/* Remote Video */}
                                 <video
@@ -159,7 +182,7 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                                     className="max-w-full max-h-full w-auto h-auto object-contain"
                                 />
 
-                                {/* Local PIP Preview (Fixed inside the video stage) */}
+                                {/* Local PIP Preview */}
                                 <div className="absolute bottom-4 right-4 w-32 h-44 bg-[#1e1f29] rounded-2xl border-2 border-[#bd93f9] overflow-hidden shadow-2xl z-10 transition-transform hover:scale-110">
                                     <video
                                         ref={viewLocalRef}
@@ -210,7 +233,7 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                                             <div className={`w-4 h-4 rounded-full border-4 border-[#282a36] ${s.status === 'active' ? 'bg-[#50fa7b] shadow-[0_0_15px_rgba(80,250,123,0.5)]' : 'bg-[#ffb86c] animate-pulse'}`} />
                                             <div>
                                                 <div className="font-black text-lg tracking-tight text-[#f8f8f2]">{s.remoteUser}</div>
-                                                <div className={`text-[9px] uppercase font-black tracking-widest ${s.status === 'active' ? 'text-[#50fa7b]' : 'text-[#ffb86c]'}`}>{s.status}</div>
+                                                <div className={`text-[9px] uppercase font-black tracking-widest ${s.status === 'active' ? 'text-[#50fa7b]' : 'text-[#ffb86c]'}`}>{s.status} ( {s.withVideo ? 'VÍDEO' : 'ÁUDIO'} )</div>
                                             </div>
                                         </div>
                                         <div className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all ${s.id === activeSessionId ? 'text-[#bd93f9]' : 'text-[#6272a4] opacity-0 group-hover:opacity-100 italic'}`}>
@@ -231,7 +254,8 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                                     </button>
                                     <button
                                         onClick={onMuteVideo}
-                                        className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${isMutedVideo ? 'bg-[#ffb86c] text-[#282a36]' : 'bg-[#44475a] text-[#f8f8f2] hover:bg-[#6272a4]/20 border border-[#6272a4]/30'}`}
+                                        disabled={!activeSession?.withVideo}
+                                        className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all disabled:opacity-30 disabled:cursor-not-allowed ${isMutedVideo ? 'bg-[#ffb86c] text-[#282a36]' : 'bg-[#44475a] text-[#f8f8f2] hover:bg-[#6272a4]/20 border border-[#6272a4]/30'}`}
                                     >
                                         {isMutedVideo ? '📹On' : '🎥 Off'}
                                     </button>

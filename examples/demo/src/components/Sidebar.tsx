@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentChapter, setCurrentChap
                 <h1 className="text-xl font-black text-[#bd93f9] tracking-tighter flex items-center gap-2">
                     <span className="text-2xl">⚡</span> EASY-SIPJS
                 </h1>
-                <p className="text-[10px] font-bold text-[#6272a4] uppercase tracking-widest mt-1">Interactive Guide</p>
+                <p className="text-[10px] font-bold text-[#6272a4] uppercase tracking-widest mt-1">Guia Interativo</p>
             </div>
 
             <nav className="flex-1 space-y-2">
