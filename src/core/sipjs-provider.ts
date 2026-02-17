@@ -11,6 +11,44 @@ export class SipJSSession implements ISipSession {
     async bye(): Promise<void> {
         await this.session.bye();
     }
+
+    mute(): void {
+        this.toggleAudioTracks(false);
+    }
+
+    unmute(): void {
+        this.toggleAudioTracks(true);
+    }
+
+    async hold(): Promise<void> {
+        const options: any = {
+            sessionDescriptionHandlerOptions: {
+                hold: true
+            }
+        };
+        await this.session.invite(options);
+        this.toggleAudioTracks(false); // Silencia localmente também
+    }
+
+    async unhold(): Promise<void> {
+        const options: any = {
+            sessionDescriptionHandlerOptions: {
+                hold: false
+            }
+        };
+        await this.session.invite(options);
+        this.toggleAudioTracks(true); // Reativa localmente
+    }
+
+    private toggleAudioTracks(enabled: boolean): void {
+        const handler = this.session.sessionDescriptionHandler;
+        if (handler && (handler as any).localMediaStream) {
+            const stream = (handler as any).localMediaStream as MediaStream;
+            stream.getAudioTracks().forEach(track => {
+                track.enabled = enabled;
+            });
+        }
+    }
 }
 
 export class SipJSProvider implements ISipProvider {

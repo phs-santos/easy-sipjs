@@ -16,6 +16,10 @@ export interface ISipProvider {
 export interface ISipSession {
     onTerminate?: () => void;
     bye(): Promise<void>;
+    mute(): void;
+    unmute(): void;
+    hold(): Promise<void>;
+    unhold(): Promise<void>;
     // In the future, we can add more implementation-agnostic methods here
     // like mute(), hold(), etc.
 }
