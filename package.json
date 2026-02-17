@@ -1,6 +1,6 @@
 {
 	"name": "easy-sipjs",
-	"version": "2.2.0",
+	"version": "2.3.0",
 	"description": "Abstração simplificada do SIP.js para projetos WebRTC.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
