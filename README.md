@@ -22,6 +22,26 @@ Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https:/
 npm install easy-sipjs
 ```
 
+### Via CDN (Browser)
+
+Você pode usar a biblioteca diretamente no navegador sem nenhum bundler:
+
+```html
+<script src="https://unpkg.com/easy-sipjs/dist/easy-sip.min.js"></script>
+<script>
+  const client = new EasySip.SipClient({ ... });
+</script>
+```
+
+Ou via ESM (recomendado):
+
+```html
+<script type="module">
+  import { SipClient } from 'https://esm.sh/easy-sipjs';
+  const client = new SipClient({ ... });
+</script>
+```
+
 ## 🚀 Guia de Uso Rápido
 
 ### 1. Instanciamento e Registro

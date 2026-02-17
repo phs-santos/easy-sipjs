@@ -7,17 +7,20 @@
 	"files": [
 		"dist",
 		"README.md",
-		"LICENSE"
+		"LICENSE",
+		"CHANGELOG.md"
 	],
 	"type": "module",
 	"scripts": {
-		"build": "tsc",
+		"build": "tsc && npm run bundle",
+		"bundle": "esbuild src/index.ts --bundle --minify --sourcemap --format=iife --global-name=EasySip --outfile=dist/easy-sip.min.js",
 		"deploy": "npm run build && npm publish --access public",
 		"dev": "ts-node-dev --respawn --transpile-only --ignore-watch node_modules --no-notify src/index.ts",
-		"release:patch": "npm run build && npm version patch -m \"chore(release): %s\" && git push origin main --tags",
-		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags",
-		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags",
-		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags",
+		"release:patch": "npm run build && npm version patch -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
+		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
+		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
+		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
+		"release:gh": "gh release create v$(node -p \"require('./package.json').version\") dist/easy-sip.min.js dist/easy-sip.min.js.map --generate-notes",
 		"version": "node scripts/update-readme-version.js && git add README.md",
 		"prepublishOnly": "npm run build && mv README.md README.gh.md && cp NPM.md README.md",
 		"postpublish": "mv README.gh.md README.md"
@@ -40,6 +43,7 @@
 	"devDependencies": {
 		"@types/jssip": "^3.5.3",
 		"@types/node": "^22.10.7",
+		"esbuild": "^0.27.3",
 		"ts-node": "^10.9.2",
 		"ts-node-dev": "^2.0.0",
 		"typescript": "^5.9.3"
