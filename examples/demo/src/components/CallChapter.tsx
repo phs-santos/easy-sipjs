@@ -1,4 +1,4 @@
-import React from 'react';
+import { FC, useEffect, useRef } from 'react';
 import { ConnectionState, ManagedSession } from '../types';
 import { Invitation, SipClient } from 'easy-sipjs';
 
@@ -41,19 +41,19 @@ interface CallChapterProps {
  */
 import { useSip } from '../services/useSip';
 
-export const CallChapter: React.FC<CallChapterProps> = ({
+export const CallChapter: FC<CallChapterProps> = ({
     connectionState, destination, setDestination, handleCall, handleHangup,
     callActive, incomingInvitation, handleAnswer, masterRemoteVideoRef, masterLocalVideoRef,
     sessions, activeSessionId, switchSession, isMuted, isMutedVideo, isOnHold, onMute, onMuteVideo, onHold
 }) => {
-    const { audioDevices, selectedOutputDeviceId, refreshAudioDevices, setAudioOutputDevice } = useSip();
+    const { audioDevices, selectedOutputDeviceId, refreshAudioDevices, setAudioOutputDevice, sendDTMF } = useSip();
     const activeSession = sessions.find(s => s.id === activeSessionId);
 
-    const viewRemoteRef = React.useRef<HTMLVideoElement>(null);
-    const viewLocalRef = React.useRef<HTMLVideoElement>(null);
+    const viewRemoteRef = useRef<HTMLVideoElement>(null);
+    const viewLocalRef = useRef<HTMLVideoElement>(null);
 
     // Mirror streams from master elements to chapter views
-    React.useEffect(() => {
+    useEffect(() => {
         const sync = () => {
             if (viewRemoteRef.current && masterRemoteVideoRef.current) {
                 if (viewRemoteRef.current.srcObject !== masterRemoteVideoRef.current.srcObject) {
@@ -72,7 +72,7 @@ export const CallChapter: React.FC<CallChapterProps> = ({
         return () => clearInterval(interval);
     }, [callActive, masterRemoteVideoRef, masterLocalVideoRef]);
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (callActive) refreshAudioDevices();
     }, [callActive]);
 
@@ -265,6 +265,36 @@ export const CallChapter: React.FC<CallChapterProps> = ({
                                     >
                                         {isOnHold ? '▶️ Resume' : '⏸️ Hold'}
                                     </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* DTMF Dialpad (Conditional) */}
+                        {callActive && !isOnHold && (
+                            <div className="p-8 pt-0 bg-[#1e1f29]/50 border-t border-[#6272a4]/5 flex flex-col gap-6 animate-in slide-in-from-bottom-4">
+                                <div className="flex items-center justify-between border-b border-[#6272a4]/10 pb-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-[#ff79c6] animate-pulse" />
+                                        <span className="text-[10px] font-black text-[#ff79c6] uppercase tracking-[0.2em]">DTMF Pad (Teclado)</span>
+                                    </div>
+                                    <div className="flex gap-1 overflow-hidden max-w-[150px]">
+                                        {activeSession?.dtmfHistory.map((tone, i) => (
+                                            <span key={i} className="text-[9px] font-mono text-[#6272a4] bg-[#282a36] px-1.5 py-0.5 rounded border border-[#6272a4]/20 animate-in fade-in zoom-in duration-300">
+                                                {tone}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-4 gap-3">
+                                    {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(key => (
+                                        <button
+                                            key={key}
+                                            onClick={() => sendDTMF(key)}
+                                            className="bg-[#282a36] hover:bg-[#bd93f9] hover:text-[#282a36] text-[#f8f8f2] font-black py-4 rounded-xl border border-[#6272a4]/20 shadow-lg transition-all active:scale-90 text-sm font-mono"
+                                        >
+                                            {key}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         )}

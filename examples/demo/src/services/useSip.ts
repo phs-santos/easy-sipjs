@@ -24,5 +24,6 @@ export function useSip() {
         clearLogs: easySipService.clearLogs.bind(easySipService),
         refreshAudioDevices: easySipService.refreshAudioDevices.bind(easySipService),
         setAudioOutputDevice: easySipService.setAudioOutputDevice.bind(easySipService),
+        sendDTMF: easySipService.sendDTMF.bind(easySipService),
     };
 }

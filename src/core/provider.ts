@@ -25,4 +25,6 @@ export interface ISipSession {
     unhold(): Promise<void>;
     transfer(target: string | ISipSession): Promise<void>;
     setAudioOutput(deviceId: string): Promise<void>;
+    sendDTMF(tone: string): Promise<void>;
+    onDTMF?: (tone: string) => void;
 }

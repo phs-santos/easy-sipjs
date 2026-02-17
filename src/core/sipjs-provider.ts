@@ -6,9 +6,24 @@ import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
     public onTerminate?: () => void;
+    public onDTMF?: (tone: string) => void;
     private remoteElement?: HTMLMediaElement;
 
-    constructor(private session: Session) { }
+    constructor(private session: Session) {
+        this.session.delegate = {
+            onInfo: (info) => {
+                const contentType = info.request.getHeader('Content-Type');
+                if (contentType && contentType.includes('dtmf-relay')) {
+                    const body = info.request.body;
+                    const match = body.match(/Signal=\s*([0-9#*])/i);
+                    if (match && this.onDTMF) {
+                        this.onDTMF(match[1]);
+                    }
+                    info.accept();
+                }
+            }
+        };
+    }
 
     /** @internal */
     setRemoteElement(el: HTMLMediaElement) {
@@ -84,6 +99,19 @@ export class SipJSSession implements ISipSession {
         } else {
             console.warn("setSinkId is not supported in this browser");
         }
+    }
+
+    async sendDTMF(tone: string): Promise<void> {
+        const options = {
+            requestOptions: {
+                body: {
+                    contentDisposition: "render",
+                    contentType: "application/dtmf-relay",
+                    content: `Signal=${tone}\r\nDuration=100`
+                }
+            }
+        };
+        return (this.session as any).info(options);
     }
 
     private toggleAudioTracks(enabled: boolean): void {

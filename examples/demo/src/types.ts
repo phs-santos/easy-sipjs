@@ -14,6 +14,7 @@ export interface ManagedSession {
     remoteUser: string;
     status: 'calling' | 'active' | 'on-hold';
     withVideo: boolean;
+    dtmfHistory: string[];
 }
 
 export interface Credentials {

@@ -125,6 +125,10 @@ export class SipClient {
         await this.session?.setAudioOutput(deviceId);
     }
 
+    async sendDTMF(tone: string) {
+        await this.session?.sendDTMF(tone);
+    }
+
     async hangup() {
         if (this.session) {
             await this.session.bye();

@@ -143,7 +143,7 @@ class EasySipService {
 
             this.sessions = [
                 ...this.sessions.map(s => ({ ...s, status: 'on-hold' as const })),
-                { id: sid, remoteUser: destination, status: 'calling', withVideo: video }
+                { id: sid, remoteUser: destination, status: 'calling', withVideo: video, dtmfHistory: [] }
             ];
             this.activeSessionId = sid;
             this.state = "in-call";
@@ -153,6 +153,14 @@ class EasySipService {
                 this.addLog(`Chamada com ${destination} encerrada`, 'info');
                 this.sessionMap.delete(sid);
                 this.updateSessionsAfterTerminate(sid);
+            };
+
+            session.onDTMF = (tone) => {
+                this.addLog(`DTMF Recebido na sessão ${sid}: ${tone}`, 'info');
+                this.sessions = this.sessions.map(s =>
+                    s.id === sid ? { ...s, dtmfHistory: [...s.dtmfHistory, tone].slice(-10) } : s
+                );
+                this.notify();
             };
         } catch (error) {
             this.addLog(`Falha ao iniciar chamada: ${error}`, 'error');
@@ -179,7 +187,7 @@ class EasySipService {
 
             this.sessions = [
                 ...this.sessions.map(s => ({ ...s, status: 'on-hold' as const })),
-                { id: sid, remoteUser: user, status: 'active', withVideo: video }
+                { id: sid, remoteUser: user, status: 'active', withVideo: video, dtmfHistory: [] }
             ];
             this.activeSessionId = sid;
             this.state = "in-call";
@@ -190,8 +198,26 @@ class EasySipService {
                 this.sessionMap.delete(sid);
                 this.updateSessionsAfterTerminate(sid);
             };
+
+            session.onDTMF = (tone) => {
+                this.addLog(`DTMF Recebido na sessão ${sid}: ${tone}`, 'info');
+                this.sessions = this.sessions.map(s =>
+                    s.id === sid ? { ...s, dtmfHistory: [...s.dtmfHistory, tone].slice(-10) } : s
+                );
+                this.notify();
+            };
         } catch (error) {
             this.addLog("Erro ao atender chamada", 'error');
+        }
+    }
+
+    public async sendDTMF(tone: string) {
+        if (this.activeSessionId) {
+            const session = this.sessionMap.get(this.activeSessionId);
+            if (session) {
+                this.addLog(`Enviando DTMF: ${tone}`, 'info');
+                await session.sendDTMF(tone);
+            }
         }
     }
 
