@@ -18,7 +18,9 @@
 		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags",
 		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags",
 		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags",
-		"version": "node scripts/update-readme-version.js && git add README.md"
+		"version": "node scripts/update-readme-version.js && git add README.md",
+		"prepublishOnly": "npm run build && mv README.md README.gh.md && cp NPM.md README.md",
+		"postpublish": "mv README.gh.md README.md"
 	},
 	"repository": {
 		"type": "git",
