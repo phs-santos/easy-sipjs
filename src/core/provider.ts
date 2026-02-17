@@ -9,7 +9,7 @@ export interface ISipProvider {
     ): Promise<void>;
 
     call(options: CallOptions): Promise<ISipSession>;
-
+    answer(invitation: any, options: MediaElements): Promise<ISipSession>;
     unregister(): Promise<void>;
 }
 

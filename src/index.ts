@@ -7,6 +7,7 @@ import type {
     Notification,
     Referral,
     Subscription,
+    MediaElements,
 } from "./core/types";
 import {
     IncomingReferRequest,
@@ -74,6 +75,12 @@ export class SipClient {
 
     async call(options: Omit<CallOptions, "userAgent">) {
         const session = await this.provider.call(options);
+        this.session = session;
+        return session;
+    }
+
+    async answer(invitation: Invitation, options: MediaElements) {
+        const session = await this.provider.answer(invitation, options);
         this.session = session;
         return session;
     }

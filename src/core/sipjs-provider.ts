@@ -1,7 +1,7 @@
-import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session } from "sip.js";
+import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session, Invitation } from "sip.js";
 import { OutgoingRequestDelegate } from "sip.js/lib/core";
 import { ISipProvider, ISipSession } from "./provider";
-import { SipCredentials, CallOptions, SipRegisterResult } from "./types";
+import { SipCredentials, CallOptions, SipRegisterResult, MediaElements } from "./types";
 import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
@@ -94,6 +94,28 @@ export class SipJSProvider implements ISipProvider {
 
         await inviter.invite({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
+        });
+
+        return sipSession;
+    }
+
+    async answer(invitation: Invitation, options: MediaElements): Promise<ISipSession> {
+        if (!this.userAgent) {
+            throw new Error("UserAgent not initialized. Call register() first.");
+        }
+
+        const { localElement, remoteElement } = options;
+        const sipSession = new SipJSSession(invitation);
+
+        handleStateChanges(
+            invitation,
+            localElement,
+            remoteElement,
+            () => { if (sipSession.onTerminate) sipSession.onTerminate(); }
+        );
+
+        await invitation.accept({
+            sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
         });
 
         return sipSession;
