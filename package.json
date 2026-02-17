@@ -4,6 +4,11 @@
 	"description": "Abstração simplificada do SIP.js para projetos WebRTC.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
 	"type": "module",
 	"scripts": {
 		"build": "tsc",
@@ -12,7 +17,8 @@
 		"release:patch": "npm run build && npm version patch -m \"chore(release): %s\" && git push origin main --tags",
 		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags",
 		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags",
-		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags"
+		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags",
+		"version": "node scripts/update-readme-version.js && git add README.md"
 	},
 	"repository": {
 		"type": "git",

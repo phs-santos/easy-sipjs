@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        /* ========= Core Colors ========= */
+        --background: 220 14% 97%;
+        --foreground: 220 20% 10%;
+
+        --card: 0 0% 100%;
+        --card-foreground: 220 20% 12%;
+
+        --popover: 0 0% 100%;
+        --popover-foreground: 220 20% 12%;
+
+        /* ========= Brand ========= */
+        --primary: 217 90% 56%;
+        /* Azul médio - calmo e tecnológico */
+        --primary-foreground: 0 0% 100%;
+
+        --secondary: 248 70% 58%;
+        /* Azul violeta - complementar */
+        --secondary-foreground: 0 0% 100%;
+
+        --accent: 45 95% 55%;
+        /* Dourado suave para contraste */
+        --accent-foreground: 0 0% 12%;
+
+        /* ========= Neutral ========= */
+        --muted: 210 20% 94%;
+        --muted-foreground: 220 10% 40%;
+
+        --border: 210 16% 85%;
+        --input: 210 16% 85%;
+        --ring: 217 90% 56%;
+
+        /* ========= Status ========= */
+        --destructive: 0 85% 60%;
+        --destructive-foreground: 0 0% 100%;
+
+        /* ========= Effects ========= */
+        --gradient-primary: linear-gradient(135deg,
+                hsl(217 90% 56%),
+                hsl(222 85% 50%));
+
+        --gradient-card: linear-gradient(135deg,
+                hsl(0 0% 100%),
+                hsl(220 20% 96%));
+
+        --shadow-glow: 0 0 40px hsl(217 90% 56% / 0.25);
+        --shadow-card: 0 8px 32px hsl(220 20% 10% / 0.08);
+
+        --radius: 0.75rem;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground antialiased;
+    }
+}

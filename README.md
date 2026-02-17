@@ -1,4 +1,6 @@
-# easy-sipjs (v1.2.0)
+# easy-sipjs (v1.3.0)
+
+![npm version](https://img.shields.io/npm/v/easy-sipjs?color=ff79c6&logo=npm&style=for-the-badge)
 
 Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https://sipjs.com/), projetada para reduzir drasticamente o boilerplate em aplicações WebRTC e focar na experiência do desenvolvedor.
 
@@ -64,6 +66,14 @@ client.onUserAgent.onInvite = async (invitation) => {
   // Ou para rejeitar:
   await invitation.reject();
 };
+```
+
+### 🎮 Playground Integreado
+Para testar a biblioteca em tempo real com uma interface Dracula Premium:
+```bash
+cd examples/demo
+npm install
+npm run dev
 ```
 
 ### 4. Controles de Mídia (Mute & Hold)
