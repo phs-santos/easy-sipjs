@@ -1,4 +1,4 @@
-# easy-sipjs (v2.1.1)
+# easy-sipjs
 
 ![npm version](https://img.shields.io/npm/v/easy-sipjs?color=ff79c6&logo=npm&style=for-the-badge)
 
@@ -9,8 +9,10 @@ Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https:/
 - **Registro Simplificado**: Conecta e registra no seu PBX com apenas um comando.
 - **Gestão Semântica de Chamadas**: Métodos intuitivos para `call`, `answer`, `reject` e `bye`.
 - **Múltiplas Chamadas (Multi-Call)**: Gerenciamento robusto de várias sessões simultâneas.
-- **Controles de Mídia**: Suporte nativo para **Mute/Unmute** e **Hold/Unhold** (com re-INVITE SDP via RFC 6337).
+- **Controles de Mídia**: Suporte nativo para **Mute/Unmute**, **MuteVideo/UnmuteVideo** e **Hold/Unhold** (com re-INVITE SDP via RFC 6337).
 - **Auto-Hold Inteligente**: Lógica para colocar chamadas em espera automaticamente ao alternar linhas.
+- **Suporte a Saída de Áudio**: Seleção de dispositivos de saída (alto-falantes/fones) via `setSinkId`.
+- **Suporte a DTMF**: Envio e recebimento de tons via sinalização INFO (dtmf-relay).
 - **Protocol Trace**: Capture logs de sinalização WSS/SIP brutos para depuração profunda.
 
 ## 📦 Instalação
@@ -43,55 +45,24 @@ client.onRegister.onAccept = () => console.log("Online e pronto! 🎉");
 
 ```typescript
 const session = await client.call({
-  destination: "sip:4002@seu-dominio.com",
-  remoteElement: document.getElementById('remoteAudio'), // Elemento <audio> para o som remoto
-  video: false
+  destination: "4002",
+  remoteElement: document.getElementById('remoteVideo'),
+  video: true
 });
+
+// Enviar DTMF
+await session.sendDTMF('1');
 
 // Encerrar chamada
 await session.bye();
 ```
 
-### 3. Recebendo Chamadas
-
-```typescript
-client.onUserAgent.onInvite = async (invitation) => {
-  console.log("Chamada de:", invitation.remoteIdentity.uri.user);
-  
-  // Para atender:
-  const session = await client.answer(invitation, {
-    remoteElement: document.getElementById('remoteAudio')
-  });
-  
-  // Ou para rejeitar:
-  await invitation.reject();
-};
-```
-
-### 🎮 Playground Integreado
+### 🎮 Playground Integrado
 Para testar a biblioteca em tempo real com uma interface Dracula Premium:
 ```bash
 cd examples/demo
 npm install
 npm run dev
-```
-
-### 4. Controles de Mídia (Mute & Hold)
-
-O `easy-sipjs` gerencia o estado do SDP e das faixas de áudio para você.
-
-```typescript
-// Mutar microfone
-session.mute();
-
-// Retomar áudio
-session.unmute();
-
-// Colocar em espera (Envia re-INVITE e pausa áudio)
-await session.hold();
-
-// Retomar da espera
-await session.unhold();
 ```
 
 ## 🧪 Depuração (Protocol Trace)
@@ -106,22 +77,10 @@ client.onSipLog = (level, category, label, content) => {
 };
 ```
 
-## 🤝 Contribuindo
-
-Contribuições são fundamentais para a evolução do projeto! 
-
-1. Faça um fork do repositório.
-2. Crie seu branch funcional (`git checkout -b feature/minha-melhoria`).
-3. Commit suas alterações (`git commit -m 'feat: nova funcionalidade'`).
-4. Push para o branch (`git push origin feature/minha-melhoria`).
-5. Abra um Pull Request.
-
 ## 📄 Licença
 
-Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
+Este projeto está licenciado sob a licença MIT.
 
 ## 🛠 Suporte
 
-Dúvidas ou problemas?
-- Abra uma [Issue](https://github.com/phs-santos/easy-sipjs/issues)
 - Desenvolvido por [phs-santos](https://github.com/phs-santos)

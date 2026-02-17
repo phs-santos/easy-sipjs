@@ -2,43 +2,43 @@
 
 ![npm version](https://img.shields.io/npm/v/easy-sipjs?color=ff79c6&logo=npm&style=for-the-badge)
 
-A high-level, simplified abstraction layer for [SIP.js](https://sipjs.com/), designed to drastically reduce boilerplate in WebRTC applications and focus on developer experience.
+Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https://sipjs.com/), projetada para reduzir drasticamente o boilerplate em aplicações WebRTC e focar na experiência do desenvolvedor.
 
-## Installation
+## Instalação
 
 ```bash
 npm install easy-sipjs
 ```
 
-## Quick Start
+## Início Rápido
 
-### 1. Registration
+### 1. Registro
 
 ```typescript
 import { SipClient } from 'easy-sipjs';
 
 const client = new SipClient({
-  domain: "your-domain.com",
+  domain: "seu-dominio.com",
   phone: "4001",
-  secret: "your-password",
-  server: "wss://your-wss-server:8089/ws"
+  secret: "sua-senha",
+  server: "wss://seu-servidor-wss:8089/ws"
 });
 
 await client.register();
 ```
 
-### 2. Making a Call (Audio/Video)
+### 2. Fazendo uma Chamada (Áudio/Vídeo)
 
 ```typescript
 const session = await client.call({
-  destination: "sip:4002@your-domain.com",
+  destination: "sip:4002@seu-dominio.com",
   remoteElement: document.getElementById('remoteVideo'),
-  localElement: document.getElementById('localVideo'), // Optional
+  localElement: document.getElementById('localVideo'), // Opcional
   video: true
 });
 ```
 
-### 3. Media Controls & DTMF
+### 3. Controles de Mídia & DTMF
 
 ```typescript
 session.mute();
@@ -46,21 +46,21 @@ session.hold();
 await session.sendDTMF('1');
 ```
 
-## API Summary
+## Resumo da API
 
 ### SipClient
-- `register()`: Handshake with the PBX.
-- `call(options)`: Initiates a new session.
-- `answer(invitation, options)`: Answers an incoming call.
-- `onSipLog`: Callback for raw SIP signaling traces.
+- `register()`: Handshake com o PBX.
+- `call(options)`: Inicia uma nova sessão.
+- `answer(invitation, options)`: Atende uma chamada recebida.
+- `onSipLog`: Callback para logs brutos de sinalização SIP.
 
 ### ISipSession
-- `mute()` / `unmute()`: Microfone control.
-- `muteVideo()` / `unmuteVideo()`: Camera control.
-- `hold()` / `unhold()`: Session hold (RFC 6337).
-- `sendDTMF(tone)`: Sends tones via SIP INFO (dtmf-relay).
-- `bye()`: Terminates the session.
+- `mute()` / `unmute()`: Controle de microfone.
+- `muteVideo()` / `unmuteVideo()`: Controle de câmera.
+- `hold()` / `unhold()`: Colocar em espera (RFC 6337).
+- `sendDTMF(tone)`: Envia tons via SIP INFO (dtmf-relay).
+- `bye()`: Encerra a sessão.
 
-## License
+## Licença
 
 MIT
