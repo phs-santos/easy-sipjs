@@ -85,6 +85,26 @@ export class SipClient {
         return session;
     }
 
+    async mute() {
+        this.session?.mute();
+    }
+
+    async unmute() {
+        this.session?.unmute();
+    }
+
+    async hold() {
+        await this.session?.hold();
+    }
+
+    async unhold() {
+        await this.session?.unhold();
+    }
+
+    async transfer(target: string | ISipSession) {
+        await this.session?.transfer(target);
+    }
+
     async hangup() {
         if (this.session) {
             await this.session.bye();

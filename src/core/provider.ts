@@ -20,6 +20,7 @@ export interface ISipSession {
     unmute(): void;
     hold(): Promise<void>;
     unhold(): Promise<void>;
+    transfer(target: string | ISipSession): Promise<void>;
     // In the future, we can add more implementation-agnostic methods here
     // like mute(), hold(), etc.
 }

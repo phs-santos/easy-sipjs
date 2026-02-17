@@ -9,7 +9,16 @@ export class SipJSSession implements ISipSession {
     constructor(private session: Session) { }
 
     async bye(): Promise<void> {
-        await this.session.bye();
+        const state = this.session.state;
+        if (state === "Initial" || state === "Establishing") {
+            if (this.session instanceof Inviter) {
+                await this.session.cancel();
+            } else if (this.session instanceof Invitation) {
+                await this.session.reject();
+            }
+        } else if (state === "Established") {
+            await this.session.bye();
+        }
     }
 
     mute(): void {
@@ -38,6 +47,19 @@ export class SipJSSession implements ISipSession {
         };
         await this.session.invite(options);
         this.toggleAudioTracks(true); // Reativa localmente
+    }
+
+    async transfer(target: string | ISipSession): Promise<void> {
+        if (typeof target === "string") {
+            const uri = UserAgent.makeURI(target);
+            if (!uri) throw new Error("Invalid transfer target URI");
+            await this.session.refer(uri);
+        } else {
+            // Supondo que target seja uma instância de SipJSSession
+            const otherSession = (target as any).session;
+            if (!otherSession) throw new Error("Invalid transfer target session");
+            await this.session.refer(otherSession);
+        }
     }
 
     private toggleAudioTracks(enabled: boolean): void {
