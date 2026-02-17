@@ -1,0 +1,41 @@
+{
+	"name": "easy-sipjs",
+	"version": "1.0.0",
+	"description": "Abstração simplificada do SIP.js para projetos WebRTC.",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"deploy": "npm run build && npm publish --access public",
+		"dev": "ts-node-dev --respawn --transpile-only --ignore-watch node_modules --no-notify src/index.ts",
+		"release:patch": "npm run build && npm version patch -m \"chore(release): %s\" && git push origin main --tags",
+		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags",
+		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags",
+		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/phs-santos/sipjs-easy.git"
+	},
+	"keywords": [
+		"sip",
+		"voip",
+		"webrtc",
+		"sip.js"
+	],
+	"author": "Paulo Henrique Souza <paulo18santos2000@gmail.com>",
+	"bugs": {
+		"url": "https://github.com/phs-santos/sipjs-easy/issues"
+	},
+	"license": "ISC",
+	"devDependencies": {
+		"@types/node": "^22.10.7",
+		"ts-node": "^10.9.2",
+		"ts-node-dev": "^2.0.0",
+		"typescript": "^5.9.3"
+	},
+	"dependencies": {
+		"sip.js": "^0.21.2"
+	}
+}
