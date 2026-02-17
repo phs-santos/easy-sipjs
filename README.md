@@ -1,4 +1,4 @@
-# easy-sipjs (v2.0.0)
+# easy-sipjs (v2.1.0)
 
 ![npm version](https://img.shields.io/npm/v/easy-sipjs?color=ff79c6&logo=npm&style=for-the-badge)
 
