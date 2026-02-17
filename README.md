@@ -1,31 +1,117 @@
-# Simplificando a API do SIP.js
+# easy-sipjs (v1.2.0)
 
-Uma biblioteca que simplifica a API do [SIP.js](https://sipjs.com/), tornando mais fácil a integração e o uso de funcionalidades SIP em seus projetos.
+Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https://sipjs.com/), projetada para reduzir drasticamente o boilerplate em aplicações WebRTC e focar na experiência do desenvolvedor.
+
+## ✨ Principais Funcionalidades
+
+- **Registro Simplificado**: Conecta e registra no seu PBX com apenas um comando.
+- **Gestão Semântica de Chamadas**: Métodos intuitivos para `call`, `answer`, `reject` e `bye`.
+- **Múltiplas Chamadas (Multi-Call)**: Gerenciamento robusto de várias sessões simultâneas.
+- **Controles de Mídia**: Suporte nativo para **Mute/Unmute** e **Hold/Unhold** (com re-INVITE SDP via RFC 6337).
+- **Auto-Hold Inteligente**: Lógica para colocar chamadas em espera automaticamente ao alternar linhas.
+- **Protocol Trace**: Capture logs de sinalização WSS/SIP brutos para depuração profunda.
 
 ## 📦 Instalação
-
-Use o npm para instalar o pacote:
 
 ```bash
 npm install easy-sipjs
 ```
 
+## 🚀 Guia de Uso Rápido
+
+### 1. Instanciamento e Registro
+
+```typescript
+import { SipClient } from 'easy-sipjs';
+
+const client = new SipClient({
+  domain: "seu-dominio.com",
+  phone: "4001",
+  secret: "sua-senha",
+  server: "wss://seu-servidor-wss:8089/ws"
+});
+
+// Registrar o ramal
+await client.register();
+
+client.onRegister.onAccept = () => console.log("Online e pronto! 🎉");
+```
+
+### 2. Fazendo uma Chamada
+
+```typescript
+const session = await client.call({
+  destination: "sip:4002@seu-dominio.com",
+  remoteElement: document.getElementById('remoteAudio'), // Elemento <audio> para o som remoto
+  video: false
+});
+
+// Encerrar chamada
+await session.bye();
+```
+
+### 3. Recebendo Chamadas
+
+```typescript
+client.onUserAgent.onInvite = async (invitation) => {
+  console.log("Chamada de:", invitation.remoteIdentity.uri.user);
+  
+  // Para atender:
+  const session = await client.answer(invitation, {
+    remoteElement: document.getElementById('remoteAudio')
+  });
+  
+  // Ou para rejeitar:
+  await invitation.reject();
+};
+```
+
+### 4. Controles de Mídia (Mute & Hold)
+
+O `easy-sipjs` gerencia o estado do SDP e das faixas de áudio para você.
+
+```typescript
+// Mutar microfone
+session.mute();
+
+// Retomar áudio
+session.unmute();
+
+// Colocar em espera (Envia re-INVITE e pausa áudio)
+await session.hold();
+
+// Retomar da espera
+await session.unhold();
+```
+
+## 🧪 Depuração (Protocol Trace)
+
+Habilite a interceptação de logs para ver as mensagens SIP (INVITE, BYE, etc) trafegando no WebSocket:
+
+```typescript
+client.onSipLog = (level, category, label, content) => {
+  if (category === "sip.Transport") {
+    console.log("SIP Message:", content);
+  }
+};
+```
+
 ## 🤝 Contribuindo
 
-Contribuições são bem-vindas! Siga os passos abaixo:
+Contribuições são fundamentais para a evolução do projeto! 
 
-1. Faça um fork deste repositório.
-2. Crie um branch para sua feature ou correção (git checkout -b feature/nova-feature).
-3. Faça um commit das suas alterações (git commit -m 'Adiciona nova feature').
-4. Envie para o branch principal (git push origin feature/nova-feature).
+1. Faça um fork do repositório.
+2. Crie seu branch funcional (`git checkout -b feature/minha-melhoria`).
+3. Commit suas alterações (`git commit -m 'feat: nova funcionalidade'`).
+4. Push para o branch (`git push origin feature/minha-melhoria`).
 5. Abra um Pull Request.
 
-### 📄 Licença
+## 📄 Licença
 
-Este projeto está licenciado sob a licença MIT.
+Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
-### 🛠 Suporte
+## 🛠 Suporte
 
-Se você encontrar algum problema ou tiver dúvidas, abra uma issue no repositório ou envie um e-mail para paulo18santos2000@gmail.com
-
-Desenvolvido por phs-santos
+Dúvidas ou problemas?
+- Abra uma [Issue](https://github.com/phs-santos/easy-sipjs/issues)
+- Desenvolvido por [phs-santos](https://github.com/phs-santos)
