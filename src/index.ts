@@ -1,70 +1,58 @@
-import type {
+import {
     SipCredentials,
     CallOptions,
     SipRegisterResult,
-    Invitation,
-    Message,
-    Notification,
-    Referral,
-    Subscription,
-    MediaElements,
+    SipInvitation,
     AnswerOptions,
 } from "./core/types";
-import {
-    IncomingReferRequest,
-    IncomingRegisterRequest,
-    IncomingSubscribeRequest,
-    OutgoingRequestDelegate,
-} from "sip.js/lib/core";
-import { UserAgentDelegate } from "sip.js";
-import { ISipProvider, ISipSession } from "./core/provider";
+import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider";
 import { SipJSProvider } from "./core/sipjs-provider";
+import { JsSIPProvider } from "./core/jssip-provider";
 
+/**
+ * SipClient is the main entry point for the library.
+ * It provides a high-level API to interact with SIP providers (SIP.js or JsSIP).
+ */
 export class SipClient {
     private session?: ISipSession;
     private provider: ISipProvider;
 
-    public onUserAgent: UserAgentDelegate = {
-        onConnect: () => { },
-        onDisconnect: (error: Error) => { },
-        onInvite: (invitation: Invitation) => {
-            // This is specific to SIP.js provider for now to maintain compatibility
-            // but the internal session is managed via ISipSession
-        },
-        onMessage: (message: Message) => { },
-        onNotify: (notification: Notification) => { },
-        onRefer: (referral: Referral) => { },
-        onReferRequest: (request: IncomingReferRequest) => { },
-        onRegister: (registration: unknown) => { },
-        onRegisterRequest: (request: IncomingRegisterRequest) => { },
-        onSubscribe: (subscription: Subscription) => { },
-        onSubscribeRequest: (request: IncomingSubscribeRequest) => { },
-    };
-
-    public onRegister: OutgoingRequestDelegate = {
-        onAccept: () => { },
-        onReject: () => { },
-        onTrying: () => { },
-        onRedirect: () => { },
-    };
+    public onUserAgent: ISipUserAgentDelegate = {};
+    public onRegister: ISipRegisterDelegate = {};
 
     /**
      * Callback for SIP signaling logs.
-     * Useful for debugging and showing messages in a console.
      */
     public onSipLog?: (level: string, category: string, label: string, content: string) => void;
 
     /**
-     * Identifica se uma chamada recebida (Invitation) possui vídeo.
+     * Factory to check if an invitation has video (Static helper)
      */
-    public static isVideoCall(invitation: Invitation): boolean {
-        return SipJSProvider.isVideoCall(invitation);
+    public static isVideoCall(invitation: SipInvitation): boolean {
+        // This is a bit tricky now that it's generic. 
+        // We can inspect the raw object or let the provider handle it.
+        const raw = invitation.raw;
+        if (raw.request && raw.request.body) {
+            const body = raw.request.body;
+            return body.includes("m=video") && !body.includes("m=video 0");
+        }
+        return false;
     }
 
-    constructor(private credentials: SipCredentials, provider?: ISipProvider) {
-        this.provider = provider ?? new SipJSProvider();
+    constructor(private credentials: SipCredentials, options?: { provider?: 'sipjs' | 'jssip', customProvider?: ISipProvider }) {
+        if (options?.customProvider) {
+            this.provider = options.customProvider;
+        } else if (options?.provider === 'jssip') {
+            this.provider = new JsSIPProvider();
+        } else {
+            this.provider = new SipJSProvider();
+        }
     }
 
+    /**
+     * Initializes the user agent and performs registration.
+     * @returns A promise that resolves to the provider-specific UA and Registerer (for backward compatibility).
+     */
     async register(): Promise<SipRegisterResult> {
         await this.provider.register(
             this.credentials,
@@ -73,21 +61,36 @@ export class SipClient {
             this.onSipLog
         );
 
-        // Return compatibility object for legacy use
-        const sipjsProvider = this.provider as SipJSProvider;
+        // For backward compatibility if needed, but discouraged
+        if (this.provider instanceof SipJSProvider) {
+            return {
+                userAgent: this.provider.getUserAgent()!,
+                registerer: this.provider.getRegisterer()!,
+            };
+        }
+
         return {
-            userAgent: sipjsProvider.getUserAgent()!,
-            registerer: sipjsProvider.getRegisterer()!,
+            userAgent: (this.provider as any).getUA?.() || this.provider,
+            registerer: (this.provider as any).getRegisterer?.() || null,
         };
     }
 
-    async call(options: Omit<CallOptions, "userAgent">) {
+    /**
+     * Initiates an outgoing call.
+     * @param options Call configuration including destination and HTML media elements.
+     */
+    async call(options: CallOptions) {
         const session = await this.provider.call(options);
         this.session = session;
         return session;
     }
 
-    async answer(invitation: Invitation, options: AnswerOptions) {
+    /**
+     * Answers an incoming call (invitation).
+     * @param invitation The generic library invitation object.
+     * @param options Media elements and video options for the call.
+     */
+    async answer(invitation: SipInvitation, options: AnswerOptions) {
         const session = await this.provider.answer(invitation, options);
         this.session = session;
         return session;
@@ -145,3 +148,4 @@ export class SipClient {
 export * from "./core/types";
 export * from "./core/provider";
 export * from "./core/sipjs-provider";
+export * from "./core/jssip-provider";

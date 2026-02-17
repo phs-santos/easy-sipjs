@@ -6,6 +6,7 @@ Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https:/
 
 ## ✨ Principais Funcionalidades
 
+- **Multi-Provider**: Suporte nativo para **SIP.js** e **JsSIP**. Escolha o motor de sinalização que melhor se adapta ao seu projeto.
 - **Registro Simplificado**: Conecta e registra no seu PBX com apenas um comando.
 - **Gestão Semântica de Chamadas**: Métodos intuitivos para `call`, `answer`, `reject` e `bye`.
 - **Múltiplas Chamadas (Multi-Call)**: Gerenciamento robusto de várias sessões simultâneas.
@@ -33,6 +34,8 @@ const client = new SipClient({
   phone: "4001",
   secret: "sua-senha",
   server: "wss://seu-servidor-wss:8089/ws"
+}, { 
+  provider: 'jssip' // Opcional: 'sipjs' (padrão) ou 'jssip'
 });
 
 // Registrar o ramal

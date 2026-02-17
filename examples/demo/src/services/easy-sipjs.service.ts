@@ -1,4 +1,4 @@
-import { SipClient, Invitation, ISipSession } from "easy-sipjs";
+import { SipClient, SipInvitation, ISipSession } from "easy-sipjs";
 import { ConnectionState, LogEntry, ManagedSession, Credentials } from "../types";
 
 export type SipServiceListener = () => void;
@@ -9,7 +9,7 @@ class EasySipService {
     private logs: LogEntry[] = [];
     private sessions: ManagedSession[] = [];
     private activeSessionId: string | null = null;
-    private incomingInvitation: Invitation | null = null;
+    private incomingInvitation: SipInvitation | null = null;
     private sessionMap = new Map<string, ISipSession>();
     private listeners = new Set<SipServiceListener>();
     private audioDevices: MediaDeviceInfo[] = [];
@@ -76,6 +76,8 @@ class EasySipService {
                 secret: credentials.secret,
                 nameexten: credentials.phone,
                 server: credentials.server
+            }, {
+                provider: 'jssip'
             });
 
             this.client.onSipLog = (level, category, label, content) => {
@@ -87,16 +89,14 @@ class EasySipService {
             };
 
             this.client.onUserAgent.onConnect = () => this.addLog("WebSocket conectado", 'ws');
-            this.client.onUserAgent.onInvite = (invitation: Invitation) => {
+            this.client.onUserAgent.onInvite = (invitation) => {
                 this.addLog(`Chamada recebida de: ${invitation.remoteIdentity.uri.user}`, 'info');
                 this.incomingInvitation = invitation;
 
-                invitation.stateChange.addListener(s => {
-                    if (s === 'Terminated') {
-                        this.incomingInvitation = null;
-                        this.notify();
-                    }
-                });
+                invitation.onTerminate = () => {
+                    this.incomingInvitation = null;
+                    this.notify();
+                };
                 this.notify();
             };
 
@@ -167,7 +167,7 @@ class EasySipService {
         }
     }
 
-    public async answer(invitation: Invitation, remoteElement: HTMLVideoElement, localElement?: HTMLVideoElement, options?: { withVideo?: boolean }) {
+    public async answer(invitation: SipInvitation, remoteElement: HTMLVideoElement, localElement?: HTMLVideoElement, options?: { withVideo?: boolean }) {
         if (!this.client) return;
         try {
             const user = invitation.remoteIdentity.uri.user || "Unknown";

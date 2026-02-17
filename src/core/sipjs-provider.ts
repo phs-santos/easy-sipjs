@@ -1,7 +1,7 @@
 import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session, Invitation } from "sip.js";
 import { OutgoingRequestDelegate } from "sip.js/lib/core";
-import { ISipProvider, ISipSession } from "./provider";
-import { SipCredentials, CallOptions, SipRegisterResult, MediaElements, AnswerOptions } from "./types";
+import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
+import { SipCredentials, CallOptions, SipInvitation, AnswerOptions } from "./types";
 import { handleStateChanges } from "./media";
 
 export class SipJSSession implements ISipSession {
@@ -25,7 +25,6 @@ export class SipJSSession implements ISipSession {
         };
     }
 
-    /** @internal */
     setRemoteElement(el: HTMLMediaElement) {
         this.remoteElement = el;
     }
@@ -66,7 +65,7 @@ export class SipJSSession implements ISipSession {
             }
         };
         await this.session.invite(options);
-        this.toggleAudioTracks(false); // Silencia localmente também
+        this.toggleAudioTracks(false);
     }
 
     async unhold(): Promise<void> {
@@ -76,7 +75,7 @@ export class SipJSSession implements ISipSession {
             }
         };
         await this.session.invite(options);
-        this.toggleAudioTracks(true); // Reativa localmente
+        this.toggleAudioTracks(true);
     }
 
     async transfer(target: string | ISipSession): Promise<void> {
@@ -85,7 +84,6 @@ export class SipJSSession implements ISipSession {
             if (!uri) throw new Error("Invalid transfer target URI");
             await this.session.refer(uri);
         } else {
-            // Supondo que target seja uma instância de SipJSSession
             const otherSession = (target as any).session;
             if (!otherSession) throw new Error("Invalid transfer target session");
             await this.session.refer(otherSession);
@@ -141,8 +139,8 @@ export class SipJSProvider implements ISipProvider {
 
     async register(
         credentials: SipCredentials,
-        onUserAgent: UserAgentDelegate,
-        onRegister: OutgoingRequestDelegate,
+        onUserAgent: ISipUserAgentDelegate,
+        onRegister: ISipRegisterDelegate,
         onSipLog?: (level: string, category: string, label: string, content: string) => void
     ): Promise<void> {
         const {
@@ -157,6 +155,29 @@ export class SipJSProvider implements ISipProvider {
         const uri = UserAgent.makeURI(`sip:${phone}@${domain}`);
         if (!uri) throw new Error("Invalid SIP URI");
 
+        const userAgentDelegate: UserAgentDelegate = {
+            onConnect: onUserAgent.onConnect,
+            onDisconnect: onUserAgent.onDisconnect,
+            onInvite: (invitation: Invitation) => {
+                if (onUserAgent.onInvite) {
+                    const sipInvitation = this.mapToInvitation(invitation);
+
+                    invitation.stateChange.addListener((state) => {
+                        if (state === "Terminated" && sipInvitation.onTerminate) {
+                            sipInvitation.onTerminate();
+                        }
+                    });
+
+                    onUserAgent.onInvite(sipInvitation);
+                }
+            },
+            onMessage: onUserAgent.onMessage,
+            onNotify: onUserAgent.onNotify,
+            onRefer: onUserAgent.onRefer,
+            onRegister: onUserAgent.onRegister,
+            onSubscribe: onUserAgent.onSubscribe,
+        };
+
         this.userAgent = new UserAgent({
             displayName: nameexten ?? phone,
             authorizationUsername: phone,
@@ -165,9 +186,8 @@ export class SipJSProvider implements ISipProvider {
             transportOptions: { server, traceSip: true },
             userAgentString,
             contactParams: { transport: "wss" },
-            delegate: onUserAgent,
+            delegate: userAgentDelegate,
             logLevel: "error",
-            // logLevel: "debug",
             logConnector: (level: string, category: string, label: string | undefined, content: string) => {
                 if (onSipLog) {
                     onSipLog(level, category, label || "", content);
@@ -175,8 +195,6 @@ export class SipJSProvider implements ISipProvider {
             }
         });
 
-        // Forçar o Contact a ser o mesmo da AOR (uri) ajuda o SIP.js a reconhecer 
-        // a resposta 200 OK do Asterisk quando ele reescreve o cabeçalho Contact (NAT).
         this.userAgent.contact.pubGruu = uri;
         this.userAgent.contact.tempGruu = uri;
 
@@ -187,20 +205,24 @@ export class SipJSProvider implements ISipProvider {
             extraHeaders: ["Organization: @phs-santos616"],
         });
 
+        const registerDelegate: OutgoingRequestDelegate = {
+            onAccept: onRegister.onAccept,
+            onReject: onRegister.onReject,
+            onTrying: onRegister.onTrying,
+            onRedirect: onRegister.onRedirect,
+        };
+
         const options: RegistererRegisterOptions = {
-            requestDelegate: onRegister,
+            requestDelegate: registerDelegate,
         };
 
         await this.registerer.register(options);
     }
 
     async call(options: CallOptions): Promise<ISipSession> {
-        if (!this.userAgent) {
-            throw new Error("UserAgent not initialized. Call register() first.");
-        }
+        if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
         const { destination, localElement, remoteElement, video } = options;
-
         const target = UserAgent.makeURI(destination);
         if (!target) throw new Error("Invalid destination URI");
 
@@ -222,37 +244,26 @@ export class SipJSProvider implements ISipProvider {
         return sipSession;
     }
 
-    async answer(invitation: Invitation, options: AnswerOptions): Promise<ISipSession> {
-        if (!this.userAgent) {
-            throw new Error("UserAgent not initialized. Call register() first.");
-        }
+    async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
+        if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
         const { localElement, remoteElement, video } = options;
-        const sipSession = new SipJSSession(invitation);
+        const rawInvitation = invitation.raw as Invitation;
+        const sipSession = new SipJSSession(rawInvitation);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
         handleStateChanges(
-            invitation,
+            rawInvitation,
             localElement,
             remoteElement,
             () => { if (sipSession.onTerminate) sipSession.onTerminate(); }
         );
 
-        await invitation.accept({
+        await rawInvitation.accept({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
         });
 
         return sipSession;
-    }
-
-    /**
-     * Helper to identify if an invitation has video
-     */
-    public static isVideoCall(invitation: Invitation): boolean {
-        const body = invitation.request.body;
-        if (!body) return false;
-        // Check if SDP contains m=video and it's not disabled (port 0)
-        return body.includes("m=video") && !body.includes("m=video 0");
     }
 
     async unregister(): Promise<void> {
@@ -266,7 +277,20 @@ export class SipJSProvider implements ISipProvider {
         }
     }
 
-    // Helper to get raw objects if needed internally
+    private mapToInvitation(invitation: Invitation): SipInvitation {
+        return {
+            remoteIdentity: {
+                uri: {
+                    user: invitation.remoteIdentity.uri.user!
+                },
+                displayName: invitation.remoteIdentity.displayName
+            },
+            accept: async (options) => { await invitation.accept(options); },
+            reject: async (options) => { await invitation.reject(options); },
+            raw: invitation
+        };
+    }
+
     public getUserAgent() { return this.userAgent; }
     public getRegisterer() { return this.registerer; }
 }

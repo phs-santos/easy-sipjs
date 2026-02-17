@@ -1,6 +1,6 @@
 import { FC, useEffect, useRef } from 'react';
 import { ConnectionState, ManagedSession } from '../types';
-import { Invitation, SipClient } from 'easy-sipjs';
+import { SipInvitation, SipClient } from 'easy-sipjs';
 
 interface CallChapterProps {
     connectionState: ConnectionState;
@@ -9,7 +9,7 @@ interface CallChapterProps {
     handleCall: (options?: { withVideo?: boolean }) => void;
     handleHangup: () => void;
     callActive: boolean;
-    incomingInvitation: Invitation | null;
+    incomingInvitation: SipInvitation | null;
     handleAnswer: (options?: { withVideo?: boolean }) => void;
     masterRemoteVideoRef: React.RefObject<HTMLVideoElement>;
     masterLocalVideoRef: React.RefObject<HTMLVideoElement>;

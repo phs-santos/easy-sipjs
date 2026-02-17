@@ -1,5 +1,3 @@
-import { SipClient, Invitation } from "easy-sipjs";
-
 export type ConnectionState = "idle" | "connecting" | "registered" | "calling" | "in-call" | "error";
 export type Chapter = "intro" | "config" | "register" | "calls" | "debug";
 
