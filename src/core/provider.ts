@@ -14,6 +14,7 @@ export interface ISipProvider {
 }
 
 export interface ISipSession {
+    readonly id: string;
     onTerminate?: () => void;
     onDTMF?: (tone: string) => void;
     bye(): Promise<void>;

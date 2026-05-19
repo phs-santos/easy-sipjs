@@ -2,13 +2,16 @@ import JsSIP from "jssip";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
 import { SipCredentials, CallOptions, AnswerOptions, SipInvitation } from "./types";
 import { assignStream } from "./media";
+import { ensureSipPrefix } from "./utils";
 
 export class JsSIPSession implements ISipSession {
+    public readonly id: string;
     public onTerminate?: () => void;
     public onDTMF?: (tone: string) => void;
     private remoteElement?: HTMLMediaElement;
 
     constructor(private session: any) {
+        this.id = session.id || Math.random().toString(36).substr(2, 9);
         this.session.on("peerconnection", (data: any) => {
             const pc = data.peerconnection;
             pc.addEventListener("addtrack", (event: any) => {
@@ -157,7 +160,7 @@ export class JsSIPProvider implements ISipProvider {
 
         const { destination, remoteElement, video } = options;
 
-        const session = this.ua.call(`sip:${destination}`, {
+        const session = this.ua.call(ensureSipPrefix(destination), {
             mediaConstraints: { audio: true, video: !!video },
             rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: !!video }
         });

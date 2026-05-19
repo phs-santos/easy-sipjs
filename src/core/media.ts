@@ -15,6 +15,16 @@ export function handleStateChanges(
                 }
                 if (local) assignStream(handler.localMediaStream, local);
                 if (remote) assignStream(handler.remoteMediaStream, remote);
+
+                // Listen to dynamic track additions (e.g. video upgrades mid-call)
+                const pc = handler.peerConnection;
+                if (pc && remote) {
+                    pc.addEventListener("track", (event) => {
+                        if (event.streams && event.streams[0]) {
+                            assignStream(event.streams[0], remote);
+                        }
+                    });
+                }
                 break;
             case SessionState.Terminated:
                 console.log("Session terminated");
@@ -26,7 +36,9 @@ export function handleStateChanges(
 
 export function assignStream(stream: MediaStream, element: HTMLMediaElement): void {
     element.autoplay = true;
-    element.srcObject = stream;
+    if (element.srcObject !== stream) {
+        element.srcObject = stream;
+    }
     element.play().catch(err => console.error("Media play failed:", err));
 
     stream.onaddtrack = () => element.play().catch(console.error);

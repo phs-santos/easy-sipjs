@@ -3,13 +3,17 @@ import { OutgoingRequestDelegate } from "sip.js/lib/core";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
 import { SipCredentials, CallOptions, SipInvitation, AnswerOptions } from "./types";
 import { handleStateChanges } from "./media";
+import { ensureSipPrefix } from "./utils";
+
 
 export class SipJSSession implements ISipSession {
+    public readonly id: string;
     public onTerminate?: () => void;
     public onDTMF?: (tone: string) => void;
     private remoteElement?: HTMLMediaElement;
 
     constructor(private session: Session) {
+        this.id = session.id;
         this.session.delegate = {
             onInfo: (info) => {
                 const contentType = info.request.getHeader('Content-Type');
@@ -223,7 +227,7 @@ export class SipJSProvider implements ISipProvider {
         if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
         const { destination, localElement, remoteElement, video } = options;
-        const target = UserAgent.makeURI(destination);
+        const target = UserAgent.makeURI(ensureSipPrefix(destination));
         if (!target) throw new Error("Invalid destination URI");
 
         const inviter = new Inviter(this.userAgent, target);
