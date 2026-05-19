@@ -125,21 +125,45 @@ export class SipJSSession implements ISipSession {
 
     private toggleAudioTracks(enabled: boolean): void {
         const handler = this.session.sessionDescriptionHandler;
-        if (handler && (handler as any).localMediaStream) {
-            const stream = (handler as any).localMediaStream as MediaStream;
-            stream.getAudioTracks().forEach(track => {
-                track.enabled = enabled;
-            });
+        if (handler) {
+            // Camada 1: Habilitar/Desabilitar no Stream de mídia local do handler
+            if ((handler as any).localMediaStream) {
+                const stream = (handler as any).localMediaStream as MediaStream;
+                stream.getAudioTracks().forEach(track => {
+                    track.enabled = enabled;
+                });
+            }
+            // Camada 2: Habilitar/Desabilitar diretamente nos RtpSenders do peerConnection (Mais seguro e garantido)
+            const pc = (handler as any).peerConnection as RTCPeerConnection | undefined;
+            if (pc) {
+                pc.getSenders().forEach(sender => {
+                    if (sender.track && sender.track.kind === 'audio') {
+                        sender.track.enabled = enabled;
+                    }
+                });
+            }
         }
     }
 
     private toggleVideoTracks(enabled: boolean): void {
         const handler = this.session.sessionDescriptionHandler;
-        if (handler && (handler as any).localMediaStream) {
-            const stream = (handler as any).localMediaStream as MediaStream;
-            stream.getVideoTracks().forEach(track => {
-                track.enabled = enabled;
-            });
+        if (handler) {
+            // Camada 1: Habilitar/Desabilitar no Stream de vídeo local do handler
+            if ((handler as any).localMediaStream) {
+                const stream = (handler as any).localMediaStream as MediaStream;
+                stream.getVideoTracks().forEach(track => {
+                    track.enabled = enabled;
+                });
+            }
+            // Camada 2: Habilitar/Desabilitar diretamente nos RtpSenders do peerConnection (Mais seguro e garantido)
+            const pc = (handler as any).peerConnection as RTCPeerConnection | undefined;
+            if (pc) {
+                pc.getSenders().forEach(sender => {
+                    if (sender.track && sender.track.kind === 'video') {
+                        sender.track.enabled = enabled;
+                    }
+                });
+            }
         }
     }
 }
