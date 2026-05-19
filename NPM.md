@@ -20,6 +20,10 @@ npm install easy-sipjs
 - 🔄 **Status Reativo**: Ciclo de estados integrado (`connecting` ➡️ `connected` ➡️ `registered`).
 - 🛡️ **Helpers WebRTC**: Métodos prontos para solicitar permissões e listar dispositivos (câmeras, fones, caixas de som).
 - 🎥 **Upgrade de Vídeo Mid-Call**: A vinculação de mídia se adapta automaticamente se você ligar a câmera durante a chamada.
+- 🌐 **Suporte a STUN/TURN (ICE)**: Adicione servidores ICE de forma nativa nas credenciais de registro.
+- ✉️ **Extra Headers SIP**: Envie cabeçalhos personalizados nas chamadas e respostas com facilidade.
+- 🔌 **Reconexão de Rede Ativa**: Lógica resiliente para quedas de internet e monitoramento online do browser.
+- 🔔 **Tons de Chamada Automáticos**: Toca sons de Ringtone (entrada) e Ringback (saída) nativamente.
 - 🔊 **Speaker Selection**: Altere a saída de áudio usando SinkId nativamente.
 - 💬 **DTMF**: Envio e recepção de tons via SIP INFO (`application/dtmf-relay`).
 
@@ -45,9 +49,16 @@ const client = new SipClient({
   domain: "sip.meudominio.com",
   phone: "4001",
   secret: "minhasenhasecreta",
-  server: "wss://rtc.meudominio.com:8089/ws"
+  server: "wss://rtc.meudominio.com:8089/ws",
+  // Suporte a ICE/STUN
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 }, {
-  provider: 'sipjs' // ou 'jssip'
+  provider: 'sipjs',
+  // Sons automatizados
+  sounds: {
+    ringtone: "/sounds/incoming.mp3",
+    ringback: "/sounds/outgoing.mp3"
+  }
 });
 
 client.onConnectionStateChange = (state) => {
@@ -62,13 +73,15 @@ await client.register();
 // Fazer chamada
 const session = await client.call({
   destination: "4002",
-  remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement
+  remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement,
+  extraHeaders: ["X-Agent-ID: 102"] // Cabeçalhos adicionais
 });
 
 // Receber e atender chamada
 client.onUserAgent.onInvite = async (invitation) => {
   const session = await client.answer(invitation, {
-    remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement
+    remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement,
+    extraHeaders: ["X-Answered-By: WebUI"]
   });
 };
 ```

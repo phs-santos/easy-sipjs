@@ -6,12 +6,17 @@ import { ensureSipPrefix } from "./utils";
 
 export class JsSIPSession implements ISipSession {
     public readonly id: string;
+    public onConfirm?: () => void;
     public onTerminate?: () => void;
     public onDTMF?: (tone: string) => void;
     private remoteElement?: HTMLMediaElement;
 
     constructor(private session: any) {
         this.id = session.id || Math.random().toString(36).substr(2, 9);
+
+        this.session.on("accepted", () => {
+            if (this.onConfirm) this.onConfirm();
+        });
         this.session.on("peerconnection", (data: any) => {
             const pc = data.peerconnection;
             pc.addEventListener("addtrack", (event: any) => {
@@ -105,6 +110,7 @@ export class JsSIPProvider implements ISipProvider {
             secret,
             nameexten,
             server,
+            iceServers,
         } = credentials;
 
         const socket = new JsSIP.WebSocketInterface(server!);
@@ -113,7 +119,8 @@ export class JsSIPProvider implements ISipProvider {
             uri: `sip:${phone}@${domain}`,
             password: secret,
             display_name: nameexten ?? phone,
-            register: true
+            register: true,
+            pcConfig: iceServers ? { iceServers } : undefined
         };
 
         // Fixing "UA is not a constructor" by using JsSIP.UA
@@ -158,11 +165,12 @@ export class JsSIPProvider implements ISipProvider {
     async call(options: CallOptions): Promise<ISipSession> {
         if (!this.ua) throw new Error("UA not initialized");
 
-        const { destination, remoteElement, video } = options;
+        const { destination, remoteElement, video, extraHeaders } = options;
 
         const session = this.ua.call(ensureSipPrefix(destination), {
             mediaConstraints: { audio: true, video: !!video },
-            rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: !!video }
+            rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: !!video },
+            extraHeaders: extraHeaders || []
         });
 
         const jsSipSession = new JsSIPSession(session);
@@ -172,11 +180,12 @@ export class JsSIPProvider implements ISipProvider {
     }
 
     async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
-        const { remoteElement, video } = options;
+        const { remoteElement, video, extraHeaders } = options;
 
         const rawSession = invitation.raw;
         rawSession.answer({
-            mediaConstraints: { audio: true, video: !!video }
+            mediaConstraints: { audio: true, video: !!video },
+            extraHeaders: extraHeaders || []
         });
 
         const jsSipSession = new JsSIPSession(rawSession);

@@ -5,6 +5,7 @@ export interface SipCredentials {
     nameexten?: string;
     server?: string;
     userAgentString?: string;
+    iceServers?: RTCIceServer[];
 }
 
 export interface MediaElements {
@@ -14,11 +15,13 @@ export interface MediaElements {
 
 export interface AnswerOptions extends MediaElements {
     video?: boolean;
+    extraHeaders?: string[];
 }
 
 export interface CallOptions extends MediaElements {
     destination: string;
     video?: boolean;
+    extraHeaders?: string[];
 }
 
 /**

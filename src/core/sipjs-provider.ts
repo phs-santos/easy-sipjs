@@ -8,12 +8,19 @@ import { ensureSipPrefix } from "./utils";
 
 export class SipJSSession implements ISipSession {
     public readonly id: string;
+    public onConfirm?: () => void;
     public onTerminate?: () => void;
     public onDTMF?: (tone: string) => void;
     private remoteElement?: HTMLMediaElement;
 
     constructor(private session: Session) {
         this.id = session.id;
+        
+        this.session.stateChange.addListener((state) => {
+            if (state === "Established" && this.onConfirm) {
+                this.onConfirm();
+            }
+        });
         this.session.delegate = {
             onInfo: (info) => {
                 const contentType = info.request.getHeader('Content-Type');
@@ -154,6 +161,7 @@ export class SipJSProvider implements ISipProvider {
             nameexten,
             server,
             userAgentString = "sipjs-simple",
+            iceServers,
         } = credentials;
 
         const uri = UserAgent.makeURI(`sip:${phone}@${domain}`);
@@ -196,7 +204,12 @@ export class SipJSProvider implements ISipProvider {
                 if (onSipLog) {
                     onSipLog(level, category, label || "", content);
                 }
-            }
+            },
+            sessionDescriptionHandlerFactoryOptions: iceServers ? {
+                peerConnectionConfiguration: {
+                    iceServers
+                }
+            } : undefined
         });
 
         this.userAgent.contact.pubGruu = uri;
@@ -226,11 +239,13 @@ export class SipJSProvider implements ISipProvider {
     async call(options: CallOptions): Promise<ISipSession> {
         if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
-        const { destination, localElement, remoteElement, video } = options;
+        const { destination, localElement, remoteElement, video, extraHeaders } = options;
         const target = UserAgent.makeURI(ensureSipPrefix(destination));
         if (!target) throw new Error("Invalid destination URI");
 
-        const inviter = new Inviter(this.userAgent, target);
+        const inviter = new Inviter(this.userAgent, target, {
+            extraHeaders: extraHeaders || []
+        });
         const sipSession = new SipJSSession(inviter);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
@@ -251,7 +266,7 @@ export class SipJSProvider implements ISipProvider {
     async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
         if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
-        const { localElement, remoteElement, video } = options;
+        const { localElement, remoteElement, video, extraHeaders } = options;
         const rawInvitation = invitation.raw as Invitation;
         const sipSession = new SipJSSession(rawInvitation);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
@@ -265,6 +280,7 @@ export class SipJSProvider implements ISipProvider {
 
         await rawInvitation.accept({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
+            extraHeaders: extraHeaders || []
         });
 
         return sipSession;
