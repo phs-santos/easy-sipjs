@@ -1,20 +1,25 @@
 # easy-sipjs (v2.3.1)
 
 ![npm version](https://img.shields.io/npm/v/easy-sipjs?color=ff79c6&logo=npm&style=for-the-badge)
+![license](https://img.shields.io/npm/l/easy-sipjs?color=50fa7b&style=for-the-badge)
 
-Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https://sipjs.com/), projetada para reduzir drasticamente o boilerplate em aplicações WebRTC e focar na experiência do desenvolvedor.
+Uma camada de abstração de alto nível e unificada sobre **SIP.js** e **JsSIP**. Projetada especificamente para eliminar o boilerplate exaustivo em aplicações WebRTC de produção, garantindo uma API consistente, moderna e 100% agnóstica de provedor.
 
-## ✨ Principais Funcionalidades
+---
 
-- **Multi-Provider**: Suporte nativo para **SIP.js** e **JsSIP**. Escolha o motor de sinalização que melhor se adapta ao seu projeto.
-- **Registro Simplificado**: Conecta e registra no seu PBX com apenas um comando.
-- **Gestão Semântica de Chamadas**: Métodos intuitivos para `call`, `answer`, `reject` e `bye`.
-- **Múltiplas Chamadas (Multi-Call)**: Gerenciamento robusto de várias sessões simultâneas.
-- **Controles de Mídia**: Suporte nativo para **Mute/Unmute**, **MuteVideo/UnmuteVideo** e **Hold/Unhold** (com re-INVITE SDP via RFC 6337).
-- **Auto-Hold Inteligente**: Lógica para colocar chamadas em espera automaticamente ao alternar linhas.
-- **Suporte a Saída de Áudio**: Seleção de dispositivos de saída (alto-falantes/fones) via `setSinkId`.
-- **Suporte a DTMF**: Envio e recebimento de tons via sinalização INFO (dtmf-relay).
-- **Protocol Trace**: Capture logs de sinalização WSS/SIP brutos para depuração profunda.
+## ⚡ Principais Funcionalidades
+
+- 🔌 **Multi-Provider Transparente**: Alterne entre os motores **SIP.js** e **JsSIP** em tempo de execução sem alterar uma única linha do código da sua UI.
+- 🔀 **Normalização Inteligente de URI**: Esqueça a bagunça dos prefixos `sip:`. A biblioteca normaliza os destinos automaticamente para ambos os provedores.
+- 👥 **Gerenciamento de Multi-Chamadas (Session Stack)**: Suporte nativo a múltiplos canais simultâneos com rastreamento de sessão ativa (`activeSession`), facilitando cenários de retenção, transferência e alternância de linhas.
+- 🔄 **Conexão Resiliente e Reativa**: Acompanhe o status da conexão em tempo real com o novo ciclo de estados (`connecting` ➡️ `connected` ➡️ `registered`).
+- 🛡️ **WebRTC Media Helpers (Novo!)**: Solicite permissões de áudio/vídeo e liste dispositivos de entrada (microfones/câmeras) e saída (alto-falantes) com métodos estáticos prontos para uso.
+- 🎥 **Upgrades Dinâmicos de Vídeo (Mid-Call)**: Atualizações de faixas de mídia (como ativar câmera no meio de uma chamada de voz) se refletem na tela automaticamente via escuta ativa do `RTCPeerConnection`.
+- 🎛️ **Controles de Mídia Semânticos**: Controle total sobre **Mute/Unmute** (áudio/vídeo), **Hold/Unhold** e **Transferência** (atendida ou cega).
+- 🔊 **Seleção de Alto-Falante (SinkId)**: Mude a saída de áudio da chamada dinamicamente com suporte a `setSinkId`.
+- 💬 **Sinalização DTMF**: Envio e recebimento nativo de tons via SIP INFO (`application/dtmf-relay`).
+
+---
 
 ## 📦 Instalação
 
@@ -22,88 +27,179 @@ Uma camada de abstração de alto nível e simplificada sobre o [SIP.js](https:/
 npm install easy-sipjs
 ```
 
-### Via CDN (Browser)
-
-Você pode usar a biblioteca diretamente no navegador sem nenhum bundler:
-
+### Importação Direta (Navegador/CDN)
 ```html
+<!-- Importação via Script Global -->
 <script src="https://unpkg.com/easy-sipjs/dist/easy-sip.min.js"></script>
 <script>
   const client = new EasySip.SipClient({ ... });
 </script>
-```
 
-Ou via ESM (recomendado):
-
-```html
+<!-- Importação via Módulos ESM -->
 <script type="module">
   import { SipClient } from 'https://esm.sh/easy-sipjs';
   const client = new SipClient({ ... });
 </script>
 ```
 
-## 🚀 Guia de Uso Rápido
+---
 
-### 1. Instanciamento e Registro
+## 🚀 Guia de Uso Prático
+
+### 1. Solicitar Permissões e Enumerar Dispositivos (Helpers)
+Evite escrever boilerplate extra de browser. O `SipClient` faz isso para você:
 
 ```typescript
 import { SipClient } from 'easy-sipjs';
 
-const client = new SipClient({
-  domain: "seu-dominio.com",
-  phone: "4001",
-  secret: "sua-senha",
-  server: "wss://seu-servidor-wss:8089/ws"
-}, { 
-  provider: 'jssip' // Opcional: 'sipjs' (padrão) ou 'jssip'
-});
+// Solicitar acesso ao microfone (e câmera opcionalmente)
+const hasPermission = await SipClient.requestPermissions({ audio: true, video: false });
 
-// Registrar o ramal
-await client.register();
-
-client.onRegister.onAccept = () => console.log("Online e pronto! 🎉");
+if (hasPermission) {
+  // Listar dispositivos de saída disponíveis (alto-falantes/fones)
+  const speakers = await SipClient.getAudioOutputDevices();
+  console.log("Dispositivos de saída:", speakers);
+}
 ```
 
-### 2. Fazendo uma Chamada
+### 2. Configurar o Cliente e Registrar o Ramal
 
 ```typescript
-const session = await client.call({
-  destination: "4002",
-  remoteElement: document.getElementById('remoteVideo'),
-  video: true
+const client = new SipClient({
+  domain: "sip.meudominio.com",
+  phone: "4001",
+  secret: "minhasenhasecreta",
+  server: "wss://rtc.meudominio.com:8089/ws"
+}, {
+  provider: 'jssip' // Escolha 'sipjs' (padrão) ou 'jssip'
 });
 
-// Enviar DTMF
-await session.sendDTMF('1');
+// Acompanhar o estado de conexão de forma reativa
+client.onConnectionStateChange = (state) => {
+  console.log(`Estado da Conexão: ${state}`); 
+  // Estados possíveis: 'connecting' | 'connected' | 'registered' | 'disconnected' | 'error'
+};
 
-// Encerrar chamada
+// Iniciar conexão com o PBX
+await client.register();
+```
+
+### 3. Gerenciamento e Controle de Chamadas
+
+#### Fazendo uma Chamada de Saída (Normalização automática de URI)
+```typescript
+// Você pode passar "4002", "sip:4002" ou "4002@sip.meudominio.com". A biblioteca normaliza automaticamente!
+const session = await client.call({
+  destination: "4002", 
+  remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement,
+  localElement: document.getElementById('localAudio') as HTMLMediaElement, // Opcional
+  video: false
+});
+
+// O SipClient rastreia essa sessão como a "sessão ativa" automaticamente
+console.log("ID da Sessão:", session.id);
+```
+
+#### Recebendo e Atendendo Chamadas
+```typescript
+client.onUserAgent.onInvite = async (invitation) => {
+  console.log(`Chamada recebida de: ${invitation.remoteIdentity.displayName}`);
+  
+  // Atender chamada com elementos de mídia
+  const session = await client.answer(invitation, {
+    remoteElement: document.getElementById('remoteAudio') as HTMLMediaElement,
+    video: false
+  });
+  
+  session.onTerminate = () => {
+    console.log("A chamada foi encerrada.");
+  };
+};
+```
+
+---
+
+## 🎛️ Operações em Chamadas Ativas (`ISipSession`)
+
+Uma vez obtida a instância da sessão (`ISipSession`), todas as ações de mídia e sinalização tornam-se de altíssimo nível:
+
+```typescript
+// 1. Controle de Microfone e Câmera
+session.mute();       // Silencia o microfone local
+session.unmute();     // Ativa o microfone local
+session.muteVideo();  // Desativa a transmissão da câmera local
+session.unmuteVideo();
+
+// 2. Retenção de Chamada (Espera/Hold)
+await session.hold();   // Envia SDP sendonly e silencia a faixa local
+await session.unhold(); // Retoma o fluxo bidirecional de mídia
+
+// 3. Alteração Dinâmica de Saída de Áudio (Speaker Switcher)
+await session.setAudioOutput("id-do-dispositivo-selecionado");
+
+// 4. Envio de Tons DTMF
+await session.sendDTMF("5");
+
+// 5. Transferência de Chamada (Blind ou Attended)
+await session.transfer("4003"); // Transferência cega para outro ramal
+await session.transfer(outraSessionAtiva); // Transferência atendida entre duas linhas ativas
+
+// 6. Encerrar
 await session.bye();
 ```
 
-### 🎮 Playground Integrado
-Para testar a biblioteca em tempo real com uma interface Dracula Premium:
+---
+
+## 👥 Gerenciando Múltiplas Chamadas Simultâneas
+
+Se a sua aplicação permite múltiplos canais de chamada ativos ao mesmo tempo, o `SipClient` cuida disso:
+
+```typescript
+// Obter lista de sessões em andamento
+const activeCalls = client.getSessions();
+
+// Definir qual linha está atualmente em foco na tela
+client.setActiveSession(activeCalls[0]);
+
+// Métodos de atalho no SipClient operam sempre sobre a activeSession atual:
+client.mute();   // Muta a sessão focada
+await client.hangup(); // Encerra a chamada em foco
+```
+
+---
+
+## 🔬 Depuração Profunda (Protocol Trace)
+
+Capture as mensagens SIP brutas (INVITE, BYE, 200 OK) trafegando no canal WebSocket para facilitar a análise:
+
+```typescript
+client.onSipLog = (level, category, label, content) => {
+  if (category === "sip.Transport") {
+    console.log("[SIP Signal Log]:", content);
+  }
+};
+```
+
+---
+
+## 🎮 Playground Integrado
+
+Quer ver a biblioteca funcionando em tempo real? O repositório contém uma aplicação React/TypeScript estilizada em **Dracula Premium** com logs integrados:
+
 ```bash
 cd examples/demo
 npm install
 npm run dev
 ```
 
-## 🧪 Depuração (Protocol Trace)
-
-Habilite a interceptação de logs para ver as mensagens SIP (INVITE, BYE, etc) trafegando no WebSocket:
-
-```typescript
-client.onSipLog = (level, category, label, content) => {
-  if (category === "sip.Transport") {
-    console.log("SIP Message:", content);
-  }
-};
-```
+---
 
 ## 📄 Licença
 
-Este projeto está licenciado sob a licença MIT.
+Este projeto está licenciado sob a licença **MIT**.
 
-## 🛠 Suporte
+---
 
-- Desenvolvido por [phs-santos](https://github.com/phs-santos)
+## 🛠 Autor e Suporte
+
+Desenvolvido e mantido com ❤️ por [phs-santos](https://github.com/phs-santos).
