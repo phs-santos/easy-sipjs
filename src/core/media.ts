@@ -8,15 +8,16 @@ export function handleStateChanges(
 ): void {
     session.stateChange.addListener((state: SessionState) => {
         switch (state) {
-            case SessionState.Established:
+            case SessionState.Established: {
                 const handler = session.sessionDescriptionHandler;
                 if (!handler || !(handler instanceof Web.SessionDescriptionHandler)) {
-                    throw new Error("Invalid session description handler.");
+                    console.error("easy-sipjs: Invalid session description handler — terminating session.");
+                    if (onTerminate) onTerminate();
+                    return;
                 }
                 if (local) assignStream(handler.localMediaStream, local);
                 if (remote) assignStream(handler.remoteMediaStream, remote);
 
-                // Listen to dynamic track additions (e.g. video upgrades mid-call)
                 const pc = handler.peerConnection;
                 if (pc && remote) {
                     pc.addEventListener("track", (event) => {
@@ -26,8 +27,8 @@ export function handleStateChanges(
                     });
                 }
                 break;
+            }
             case SessionState.Terminated:
-                console.log("Session terminated");
                 if (onTerminate) onTerminate();
                 break;
         }

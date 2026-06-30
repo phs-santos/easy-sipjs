@@ -186,6 +186,7 @@ export class SipJSProvider implements ISipProvider {
             server,
             userAgentString = "sipjs-simple",
             iceServers,
+            debug = false,
         } = credentials;
 
         const uri = UserAgent.makeURI(`sip:${phone}@${domain}`);
@@ -219,7 +220,7 @@ export class SipJSProvider implements ISipProvider {
             authorizationUsername: phone,
             authorizationPassword: secret,
             uri,
-            transportOptions: { server, traceSip: true },
+            transportOptions: { server, traceSip: debug },
             userAgentString,
             contactParams: { transport: "wss" },
             delegate: userAgentDelegate,
@@ -236,14 +237,10 @@ export class SipJSProvider implements ISipProvider {
             } : undefined
         });
 
-        this.userAgent.contact.pubGruu = uri;
-        this.userAgent.contact.tempGruu = uri;
-
         await this.userAgent.start();
 
         this.registerer = new Registerer(this.userAgent, {
             expires: 3600,
-            extraHeaders: ["Organization: @phs-santos616"],
         });
 
         const registerDelegate: OutgoingRequestDelegate = {

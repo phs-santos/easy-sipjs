@@ -6,6 +6,7 @@ export interface SipCredentials {
     server?: string;
     userAgentString?: string;
     iceServers?: RTCIceServer[];
+    debug?: boolean;
 }
 
 export interface MediaElements {

@@ -189,67 +189,69 @@ export class SipClient {
         this.intentionalDisconnect = false;
         this.setConnectionState('connecting');
 
-        const originalOnConnect = this.onUserAgent.onConnect;
-        this.onUserAgent.onConnect = (data) => {
-            this.setConnectionState('connected');
-            this.reconnectAttempt = 0;
-            if (originalOnConnect) originalOnConnect(data);
+        const internalUserAgentDelegate: ISipUserAgentDelegate = {
+            onConnect: (data) => {
+                this.setConnectionState('connected');
+                this.reconnectAttempt = 0;
+                this.onUserAgent.onConnect?.(data);
+            },
+            onDisconnect: (error) => {
+                this.setConnectionState('disconnected');
+                this.onUserAgent.onDisconnect?.(error);
+                if (!this.intentionalDisconnect) {
+                    this.onSipLog?.("warn", "sip.Client", "", "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
+                    this.triggerReconnection();
+                }
+            },
+            onInvite: (invitation) => {
+                this.playRingtone();
+
+                const originalAccept = invitation.accept.bind(invitation);
+                invitation.accept = async (opt) => {
+                    this.stopRingtone();
+                    await originalAccept(opt);
+                };
+
+                const originalReject = invitation.reject.bind(invitation);
+                invitation.reject = async (opt) => {
+                    this.stopRingtone();
+                    await originalReject(opt);
+                };
+
+                const originalOnTerminate = invitation.onTerminate;
+                invitation.onTerminate = () => {
+                    this.stopRingtone();
+                    if (originalOnTerminate) originalOnTerminate();
+                };
+
+                this.onUserAgent.onInvite?.(invitation);
+            },
+            onMessage: (msg) => this.onUserAgent.onMessage?.(msg),
+            onNotify: (n) => this.onUserAgent.onNotify?.(n),
+            onRefer: (r) => this.onUserAgent.onRefer?.(r),
+            onRegister: (r) => this.onUserAgent.onRegister?.(r),
+            onSubscribe: (s) => this.onUserAgent.onSubscribe?.(s),
         };
 
-        const originalOnDisconnect = this.onUserAgent.onDisconnect;
-        this.onUserAgent.onDisconnect = (error) => {
-            this.setConnectionState('disconnected');
-            if (originalOnDisconnect) originalOnDisconnect(error);
-
-            if (!this.intentionalDisconnect) {
-                this.onSipLog?.("warn", "sip.Client", "", "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
-                this.triggerReconnection();
-            }
-        };
-
-        const originalOnAccept = this.onRegister.onAccept;
-        this.onRegister.onAccept = (data) => {
-            this.setConnectionState('registered');
-            this.reconnectAttempt = 0;
-            if (originalOnAccept) originalOnAccept(data);
-        };
-
-        const originalOnReject = this.onRegister.onReject;
-        this.onRegister.onReject = (error) => {
-            this.setConnectionState('error');
-            if (originalOnReject) originalOnReject(error);
-        };
-
-        const originalOnInvite = this.onUserAgent.onInvite;
-        this.onUserAgent.onInvite = (invitation) => {
-            this.playRingtone();
-
-            const originalAccept = invitation.accept;
-            invitation.accept = async (opt) => {
-                this.stopRingtone();
-                await originalAccept.call(invitation, opt);
-            };
-
-            const originalReject = invitation.reject;
-            invitation.reject = async (opt) => {
-                this.stopRingtone();
-                await originalReject.call(invitation, opt);
-            };
-
-            const originalOnTerminate = invitation.onTerminate;
-            invitation.onTerminate = () => {
-                this.stopRingtone();
-                if (originalOnTerminate) originalOnTerminate();
-            };
-
-            if (originalOnInvite) originalOnInvite(invitation);
+        const internalRegisterDelegate: ISipRegisterDelegate = {
+            onAccept: (data) => {
+                this.setConnectionState('registered');
+                this.reconnectAttempt = 0;
+                this.onRegister.onAccept?.(data);
+            },
+            onReject: (error) => {
+                this.setConnectionState('error');
+                this.onRegister.onReject?.(error);
+            },
+            onTrying: () => this.onRegister.onTrying?.(),
+            onRedirect: (data) => this.onRegister.onRedirect?.(data),
         };
 
         try {
             await this.provider.register(
                 this.credentials,
-                this.onUserAgent,
-                this.onRegister,
+                internalUserAgentDelegate,
+                internalRegisterDelegate,
                 this.onSipLog
             );
         } catch (error) {
@@ -257,7 +259,6 @@ export class SipClient {
             throw error;
         }
 
-        // For backward compatibility if needed, but discouraged
         if (this.provider instanceof SipJSProvider) {
             return {
                 userAgent: this.provider.getUserAgent()!,

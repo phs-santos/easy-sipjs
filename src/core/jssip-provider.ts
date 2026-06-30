@@ -12,7 +12,7 @@ export class JsSIPSession implements ISipSession {
     private remoteElement?: HTMLMediaElement;
 
     constructor(private session: any) {
-        this.id = session.id || Math.random().toString(36).substr(2, 9);
+        this.id = session.id || Math.random().toString(36).substring(2, 11);
 
         this.session.on("accepted", () => {
             if (this.onConfirm) this.onConfirm();
@@ -113,7 +113,8 @@ export class JsSIPProvider implements ISipProvider {
             iceServers,
         } = credentials;
 
-        const socket = new JsSIP.WebSocketInterface(server!);
+        if (!server) throw new Error("'server' (WebSocket URL) is required for the JsSIP provider.");
+        const socket = new JsSIP.WebSocketInterface(server);
         const configuration = {
             sockets: [socket],
             uri: `sip:${phone}@${domain}`,
