@@ -238,6 +238,10 @@ export class SipJSProvider implements ISipProvider {
                 if (onUserAgent.onInvite) {
                     const sipInvitation = this.mapToInvitation(invitation);
 
+                    // Send 180 Ringing immediately so the calling side knows the phone is alerting.
+                    // Without this, the INVITE may be CANCELed by the far end before the app answers.
+                    invitation.progress().catch(() => {});
+
                     invitation.stateChange.addListener((state) => {
                         if (state === "Terminated" && sipInvitation.onTerminate) {
                             sipInvitation.onTerminate();
@@ -263,7 +267,7 @@ export class SipJSProvider implements ISipProvider {
             userAgentString,
             contactParams: { transport: "wss" },
             delegate: userAgentDelegate,
-            logLevel: "debug",
+            logLevel: "log",
             logConnector: (level: string, category: string, label: string | undefined, content: string) => {
                 onSipLog?.(level, category, label || "", content);
             },
