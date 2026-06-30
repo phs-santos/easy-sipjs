@@ -4,6 +4,16 @@
 	"description": "Abstração simplificada do SIP.js para projetos WebRTC.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./react": {
+			"types": "./dist/react/useSipClient.d.ts",
+			"default": "./dist/react/useSipClient.js"
+		}
+	},
 	"files": [
 		"dist",
 		"README.md",
@@ -43,10 +53,19 @@
 	"devDependencies": {
 		"@types/jssip": "^3.5.3",
 		"@types/node": "^22.10.7",
+		"@types/react": "^18.3.31",
 		"esbuild": "^0.27.3",
 		"ts-node": "^10.9.2",
 		"ts-node-dev": "^2.0.0",
 		"typescript": "^5.9.3"
+	},
+	"peerDependencies": {
+		"react": ">=16.8.0"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		}
 	},
 	"dependencies": {
 		"jssip": "^3.13.5",

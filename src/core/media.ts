@@ -29,6 +29,14 @@ export function handleStateChanges(
                 break;
             }
             case SessionState.Terminated:
+                if (remote) {
+                    try { remote.pause(); } catch (_) {}
+                    remote.srcObject = null;
+                }
+                if (local) {
+                    try { local.pause(); } catch (_) {}
+                    local.srcObject = null;
+                }
                 if (onTerminate) onTerminate();
                 break;
         }

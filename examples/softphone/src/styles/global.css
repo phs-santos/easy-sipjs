@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-sp-bg text-sp-text antialiased;
+  }
+}
+
+@layer components {
+  .sp-input {
+    @apply w-full bg-sp-bg border border-sp-border rounded-lg px-3 py-2 text-sm text-sp-text placeholder:text-sp-muted outline-none focus:border-sp-green transition-colors;
+  }
+}

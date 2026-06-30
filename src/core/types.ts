@@ -49,3 +49,12 @@ export interface SipRegisterResult {
 }
 
 export type SipConnectionState = 'connecting' | 'connected' | 'registered' | 'disconnected' | 'error';
+
+export interface CallStats {
+    jitter: number;
+    packetLoss: number;
+    roundTripTime: number;
+    codec: string;
+    bytesSent: number;
+    bytesReceived: number;
+}

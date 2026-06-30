@@ -1,37 +1,61 @@
 import JsSIP from "jssip";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation } from "./types";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types";
 import { assignStream } from "./media";
-import { ensureSipPrefix } from "./utils";
+import { ensureSipPrefix, parseRTCStats } from "./utils";
 
 export class JsSIPSession implements ISipSession {
     public readonly id: string;
+    public startedAt?: Date;
     public onConfirm?: () => void;
     public onTerminate?: () => void;
+    public onReject?: (statusCode: number) => void;
     public onDTMF?: (tone: string) => void;
+    public onProgress?: () => void;
+    public onHold?: () => void;
+    public onUnhold?: () => void;
+
     private remoteElement?: HTMLMediaElement;
+    private originalVideoTrack?: MediaStreamTrack;
+    private audioCtx?: AudioContext;
+    private gainNode?: GainNode;
 
     constructor(private session: any) {
         this.id = session.id || Math.random().toString(36).substring(2, 11);
 
+        this.session.on("progress", () => { this.onProgress?.(); });
+
         this.session.on("accepted", () => {
-            if (this.onConfirm) this.onConfirm();
+            this.startedAt = new Date();
+            this.onConfirm?.();
         });
+
+        this.session.on("hold", () => { this.onHold?.(); });
+        this.session.on("unhold", () => { this.onUnhold?.(); });
+
         this.session.on("peerconnection", (data: any) => {
             const pc = data.peerconnection;
             pc.addEventListener("addtrack", (event: any) => {
-                if (this.remoteElement && event.streams && event.streams[0]) {
+                if (this.remoteElement && event.streams?.[0]) {
                     assignStream(event.streams[0], this.remoteElement);
                 }
             });
         });
 
-        this.session.on("ended", () => {
-            if (this.onTerminate) this.onTerminate();
-        });
+        const cleanupAudio = () => {
+            if (this.remoteElement) {
+                try { this.remoteElement.pause(); } catch (_) {}
+                this.remoteElement.srcObject = null;
+            }
+        };
 
-        this.session.on("failed", () => {
-            if (this.onTerminate) this.onTerminate();
+        this.session.on("ended", () => { cleanupAudio(); this.onTerminate?.(); });
+        this.session.on("failed", (data: any) => {
+            cleanupAudio();
+            if (data?.originator !== "local") {
+                this.onReject?.(data?.message?.status_code ?? 0);
+            }
+            this.onTerminate?.();
         });
 
         this.session.on("newDTMF", (data: any) => {
@@ -45,25 +69,23 @@ export class JsSIPSession implements ISipSession {
         this.remoteElement = el;
     }
 
+    getRawSession(): any {
+        return this.session;
+    }
+
+    getCallDuration(): number {
+        if (!this.startedAt) return 0;
+        return Math.floor((Date.now() - this.startedAt.getTime()) / 1000);
+    }
+
     async bye(): Promise<void> {
         this.session.terminate();
     }
 
-    mute(): void {
-        this.session.mute({ audio: true });
-    }
-
-    unmute(): void {
-        this.session.unmute({ audio: true });
-    }
-
-    muteVideo(): void {
-        this.session.mute({ video: true });
-    }
-
-    unmuteVideo(): void {
-        this.session.unmute({ video: true });
-    }
+    mute(): void { this.session.mute({ audio: true }); }
+    unmute(): void { this.session.unmute({ audio: true }); }
+    muteVideo(): void { this.session.mute({ video: true }); }
+    unmuteVideo(): void { this.session.unmute({ video: true }); }
 
     async hold(): Promise<void> {
         this.session.hold();
@@ -77,7 +99,9 @@ export class JsSIPSession implements ISipSession {
         if (typeof target === "string") {
             this.session.refer(target);
         } else {
-            console.warn("Transfer to session object is not directly supported in JsSIP provider wrapper yet.");
+            const rawSession = (target as JsSIPSession).getRawSession();
+            if (!rawSession) throw new Error("Cannot access raw session for attended transfer");
+            this.session.refer(rawSession.remote_identity.uri.toString(), { replaces: rawSession });
         }
     }
 
@@ -85,35 +109,83 @@ export class JsSIPSession implements ISipSession {
         if (!this.remoteElement) return;
         if (typeof (this.remoteElement as any).setSinkId === 'function') {
             await (this.remoteElement as any).setSinkId(deviceId);
-        } else {
-            console.warn("setSinkId is not supported in this browser");
+        }
+    }
+
+    async setAudioInput(deviceId: string): Promise<void> {
+        const pc = this.session.connection as RTCPeerConnection | undefined;
+        if (!pc) return;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+        const newTrack = stream.getAudioTracks()[0];
+        const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+        if (sender) await sender.replaceTrack(newTrack);
+    }
+
+    setRemoteVolume(volume: number): void {
+        if (!this.remoteElement) return;
+        if (!this.audioCtx) {
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            if (!AudioCtx) return;
+            this.audioCtx = new AudioCtx();
+            const source = this.audioCtx.createMediaElementSource(this.remoteElement);
+            this.gainNode = this.audioCtx.createGain();
+            source.connect(this.gainNode);
+            this.gainNode.connect(this.audioCtx.destination);
+        }
+        if (this.gainNode) {
+            this.gainNode.gain.value = Math.max(0, volume);
         }
     }
 
     async sendDTMF(tone: string): Promise<void> {
         this.session.sendDTMF(tone);
     }
+
+    async shareScreen(): Promise<void> {
+        const pc = this.session.connection as RTCPeerConnection | undefined;
+        if (!pc) throw new Error("No active peer connection");
+        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
+        const screenTrack = stream.getVideoTracks()[0];
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+            this.originalVideoTrack = sender.track ?? undefined;
+            await sender.replaceTrack(screenTrack);
+            screenTrack.onended = () => this.stopScreenSharing();
+        }
+    }
+
+    async stopScreenSharing(): Promise<void> {
+        const pc = this.session.connection as RTCPeerConnection | undefined;
+        if (!pc) return;
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender && this.originalVideoTrack) {
+            await sender.replaceTrack(this.originalVideoTrack);
+            this.originalVideoTrack = undefined;
+        }
+    }
+
+    async getStats(): Promise<CallStats> {
+        const pc = this.session.connection as RTCPeerConnection | undefined;
+        if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
+        return parseRTCStats(pc);
+    }
 }
 
 export class JsSIPProvider implements ISipProvider {
     private ua?: any;
+    private domain?: string;
 
     async register(
         credentials: SipCredentials,
         onUserAgent: ISipUserAgentDelegate,
         onRegister: ISipRegisterDelegate,
-        onSipLog?: (level: string, category: string, label: string, content: string) => void
+        _onSipLog?: (level: string, category: string, label: string, content: string) => void
     ): Promise<void> {
-        const {
-            domain,
-            phone,
-            secret,
-            nameexten,
-            server,
-            iceServers,
-        } = credentials;
+        const { domain, phone, secret, nameexten, server, iceServers } = credentials;
 
         if (!server) throw new Error("'server' (WebSocket URL) is required for the JsSIP provider.");
+
+        this.domain = domain;
         const socket = new JsSIP.WebSocketInterface(server);
         const configuration = {
             sockets: [socket],
@@ -124,43 +196,35 @@ export class JsSIPProvider implements ISipProvider {
             pcConfig: iceServers ? { iceServers } : undefined
         };
 
-        // Fixing "UA is not a constructor" by using JsSIP.UA
         this.ua = new JsSIP.UA(configuration);
 
-        this.ua.on("registered", (data: any) => {
-            if (onRegister && onRegister.onAccept) onRegister.onAccept(data);
-        });
-
-        this.ua.on("registrationFailed", (data: any) => {
-            if (onRegister && onRegister.onReject) onRegister.onReject(data);
-        });
-
-        this.ua.on("connected", (data: any) => {
-            if (onUserAgent && onUserAgent.onConnect) onUserAgent.onConnect(data);
-        });
-
-        this.ua.on("disconnected", (data: any) => {
-            if (onUserAgent && onUserAgent.onDisconnect) onUserAgent.onDisconnect(data);
-        });
+        this.ua.on("registered", (data: any) => { onRegister.onAccept?.(data); });
+        this.ua.on("registrationFailed", (data: any) => { onRegister.onReject?.(data); });
+        this.ua.on("connected", (data: any) => { onUserAgent.onConnect?.(data); });
+        this.ua.on("disconnected", (data: any) => { onUserAgent.onDisconnect?.(data); });
 
         this.ua.on("newRTCSession", (data: any) => {
             if (data.originator === "remote") {
                 const invitation = this.mapToInvitation(data.session);
 
-                data.session.on("ended", () => {
-                    if (invitation.onTerminate) invitation.onTerminate();
-                });
-                data.session.on("failed", () => {
-                    if (invitation.onTerminate) invitation.onTerminate();
-                });
+                data.session.on("ended", () => { invitation.onTerminate?.(); });
+                data.session.on("failed", () => { invitation.onTerminate?.(); });
 
-                if (onUserAgent && onUserAgent.onInvite) {
-                    onUserAgent.onInvite(invitation);
-                }
+                onUserAgent.onInvite?.(invitation);
             }
         });
 
+        this.ua.on("newMessage", (data: any) => { onUserAgent.onMessage?.(data); });
+
         this.ua.start();
+    }
+
+    private resolveURI(destination: string): string {
+        const withPrefix = ensureSipPrefix(destination);
+        if (!withPrefix.includes('@') && this.domain) {
+            return `sip:${destination.replace(/^sip:/i, '')}@${this.domain}`;
+        }
+        return withPrefix;
     }
 
     async call(options: CallOptions): Promise<ISipSession> {
@@ -168,7 +232,7 @@ export class JsSIPProvider implements ISipProvider {
 
         const { destination, remoteElement, video, extraHeaders } = options;
 
-        const session = this.ua.call(ensureSipPrefix(destination), {
+        const session = this.ua.call(this.resolveURI(destination), {
             mediaConstraints: { audio: true, video: !!video },
             rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: !!video },
             extraHeaders: extraHeaders || []
@@ -202,12 +266,15 @@ export class JsSIPProvider implements ISipProvider {
         }
     }
 
+    async sendMessage(destination: string, body: string): Promise<void> {
+        if (!this.ua) throw new Error("UA not initialized");
+        this.ua.sendMessage(this.resolveURI(destination), body);
+    }
+
     private mapToInvitation(session: any): SipInvitation {
         return {
             remoteIdentity: {
-                uri: {
-                    user: session.remote_identity.uri.user
-                },
+                uri: { user: session.remote_identity.uri.user },
                 displayName: session.remote_identity.display_name
             },
             accept: async (options) => { session.answer(options); },
