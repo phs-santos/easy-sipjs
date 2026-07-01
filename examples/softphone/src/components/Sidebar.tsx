@@ -1,4 +1,4 @@
-import { Phone, Clock, MessageSquare, Settings, LogOut, Activity } from "lucide-react";
+import { Activity, Clock, LogOut, MessageSquare, Phone, Settings, Sparkles } from "lucide-react";
 import type { SipConnectionState } from "easy-sipjs";
 import type { ActiveView } from "../types";
 
@@ -13,71 +13,83 @@ interface Props {
 }
 
 const STATE_COLOR: Record<SipConnectionState, string> = {
-  registered: "bg-sp-green",
-  connected: "bg-sp-amber",
-  connecting: "bg-sp-amber",
-  disconnected: "bg-sp-red",
-  error: "bg-sp-red",
+  registered: "bg-sp-green text-sp-green",
+  connected: "bg-sp-amber text-sp-amber",
+  connecting: "bg-sp-amber text-sp-amber",
+  disconnected: "bg-sp-red text-sp-red",
+  error: "bg-sp-red text-sp-red",
 };
 
 const STATE_LABEL: Record<SipConnectionState, string> = {
-  registered: "Registrado",
+  registered: "Pronto para ligar",
   connected: "Conectado",
-  connecting: "Conectando...",
+  connecting: "Conectando…",
   disconnected: "Desconectado",
-  error: "Erro",
+  error: "Atenção necessária",
 };
 
-const NAV: { view: ActiveView; icon: React.ReactNode; label: string }[] = [
-  { view: "dialer",   icon: <Phone size={16} />,         label: "Discador"  },
-  { view: "history",  icon: <Clock size={16} />,         label: "Histórico" },
-  { view: "messages", icon: <MessageSquare size={16} />, label: "Mensagens" },
-  { view: "monitor",  icon: <Activity size={16} />,      label: "Monitor"   },
-  { view: "settings", icon: <Settings size={16} />,      label: "Ajustes"   },
+const NAV: { view: ActiveView; icon: React.ReactNode; label: string; hint: string }[] = [
+  { view: "dialer",   icon: <Phone size={17} />,         label: "Discador",  hint: "Ligações" },
+  { view: "history",  icon: <Clock size={17} />,         label: "Histórico", hint: "Registro" },
+  { view: "messages", icon: <MessageSquare size={17} />, label: "Mensagens", hint: "SIP MESSAGE" },
+  { view: "monitor",  icon: <Activity size={17} />,      label: "Monitor",   hint: "Saúde" },
+  { view: "settings", icon: <Settings size={17} />,      label: "Ajustes",   hint: "Áudio" },
 ];
 
 export function Sidebar({ activeView, onChangeView, connectionState, unreadMessages, phone, nameexten, onLogout }: Props) {
+  const status = STATE_COLOR[connectionState];
   return (
-    <aside className="w-56 bg-sp-surface border-r border-sp-border flex flex-col">
-      <div className="p-4 border-b border-sp-border">
-        <div className="flex items-center gap-2">
-          <Phone size={18} className="text-sp-green" />
-          <span className="font-bold text-sp-text">SoftPhone</span>
+    <aside className="w-[17rem] hidden md:flex flex-col border-r border-white/10 bg-[#07111f]/82 backdrop-blur-2xl">
+      <div className="p-5 border-b border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-sp-blue to-sp-green flex items-center justify-center shadow-glow">
+            <Phone size={20} className="text-[#03131d]" />
+          </div>
+          <div>
+            <span className="font-black text-sp-text text-lg leading-none">SoftPhone</span>
+            <div className="text-[10px] text-sp-muted uppercase tracking-[0.18em] font-bold mt-1">WebRTC SDK</div>
+          </div>
         </div>
-        <div className="flex items-center gap-2 mt-2 text-xs">
-          <span className={`w-2 h-2 rounded-full ${STATE_COLOR[connectionState]}`} />
-          <span className="text-sp-muted">{STATE_LABEL[connectionState]}</span>
+
+        <div className="mt-5 sp-panel p-3">
+          <div className="flex items-center gap-2 text-xs">
+            <span className={`sp-status-dot ${status.split(" ")[0]}`} />
+            <span className={`font-bold ${status.split(" ")[1]}`}>{STATE_LABEL[connectionState]}</span>
+          </div>
+          <div className="text-sp-text text-sm font-semibold mt-2 truncate">{nameexten || phone}</div>
+          <div className="text-[11px] text-sp-muted truncate">Ramal {phone}</div>
         </div>
-        <div className="text-sp-text text-sm font-medium mt-1 truncate">{nameexten || phone}</div>
       </div>
 
-      <nav className="flex-1 p-2 space-y-1">
+      <nav className="flex-1 p-3 space-y-1.5">
         {NAV.map(item => (
           <button
             key={item.view}
             onClick={() => onChangeView(item.view)}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors relative ${
+            className={`w-full flex items-center gap-3 px-3 py-3 rounded-2xl text-sm transition-all relative ${
               activeView === item.view
-                ? "bg-sp-green/10 text-sp-green"
-                : "text-sp-muted hover:bg-white/5 hover:text-sp-text"
+                ? "bg-sp-blue/12 text-sp-text border border-sp-blue/25 shadow-glow"
+                : "text-sp-muted border border-transparent hover:bg-white/[0.055] hover:text-sp-text"
             }`}
           >
-            {item.icon}
-            <span>{item.label}</span>
+            <span className={activeView === item.view ? "text-sp-blue" : "text-sp-muted"}>{item.icon}</span>
+            <span className="flex-1 text-left">
+              <span className="block font-semibold leading-none">{item.label}</span>
+              <span className="block text-[10px] text-sp-muted mt-1">{item.hint}</span>
+            </span>
             {item.view === "messages" && unreadMessages > 0 && (
-              <span className="ml-auto bg-sp-red text-white text-[10px] rounded-full px-1.5 py-0.5">
-                {unreadMessages}
-              </span>
+              <span className="ml-auto bg-sp-red text-white text-[10px] rounded-full px-1.5 py-0.5 font-bold">{unreadMessages}</span>
             )}
           </button>
         ))}
       </nav>
 
-      <div className="p-2 border-t border-sp-border">
-        <button
-          onClick={onLogout}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-sp-muted hover:bg-sp-red/10 hover:text-sp-red transition-colors"
-        >
+      <div className="p-3 border-t border-white/10 space-y-2">
+        <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3 text-xs text-sp-muted leading-relaxed">
+          <div className="flex items-center gap-1.5 text-sp-blue font-bold mb-1"><Sparkles size={13}/> UX pronta para demonstração</div>
+          Azul transmite confiança, verde confirma ação segura e vermelho fica reservado para risco/desligar.
+        </div>
+        <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl text-sm text-sp-muted hover:bg-sp-red/10 hover:text-sp-red transition-colors">
           <LogOut size={16} />
           <span>Desconectar</span>
         </button>

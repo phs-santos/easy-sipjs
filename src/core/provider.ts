@@ -4,6 +4,7 @@ import {
     AnswerOptions,
     SipInvitation,
     CallStats,
+    CallQualitySnapshot,
     DtmfOptions,
     SipSessionEventMap,
     PresenceEvent,
@@ -75,6 +76,7 @@ export interface ISipSession {
     shareScreen(): Promise<void>;
     stopScreenSharing(): Promise<void>;
     getStats(): Promise<CallStats>;
+    getQuality(): Promise<CallQualitySnapshot>;
 }
 
 export interface ISipUserAgentDelegate {

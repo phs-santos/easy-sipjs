@@ -3,13 +3,34 @@
 @tailwind utilities;
 
 @layer base {
+  * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.45) transparent; }
   body {
     @apply bg-sp-bg text-sp-text antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+  ::selection { @apply bg-sp-blue/30 text-white; }
+  button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 }
 
 @layer components {
   .sp-input {
-    @apply w-full bg-sp-bg border border-sp-border rounded-lg px-3 py-2 text-sm text-sp-text placeholder:text-sp-muted outline-none focus:border-sp-green transition-colors;
+    @apply w-full bg-white/[0.04] border border-sp-border rounded-xl px-3.5 py-2.5 text-sm text-sp-text placeholder:text-sp-muted/60 outline-none focus:border-sp-blue focus:ring-4 focus:ring-sp-blue/10 transition-all;
   }
+  .sp-card {
+    @apply bg-card-sheen bg-sp-surface/90 border border-white/10 rounded-3xl shadow-soft backdrop-blur-xl;
+  }
+  .sp-panel {
+    @apply bg-sp-surface/80 border border-sp-border/80 rounded-2xl backdrop-blur-xl;
+  }
+  .sp-button-primary {
+    @apply rounded-2xl bg-gradient-to-r from-sp-emerald to-sp-green text-[#04130a] font-bold shadow-success hover:brightness-110 disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed active:scale-[0.99] transition-all;
+  }
+  .sp-button-secondary {
+    @apply rounded-2xl bg-white/[0.06] border border-white/10 text-sp-text hover:bg-white/[0.09] active:scale-[0.99] transition-all;
+  }
+  .sp-kbd-button {
+    @apply rounded-2xl bg-white/[0.055] border border-white/10 hover:bg-white/[0.09] hover:border-sp-blue/30 active:scale-95 transition-all select-none shadow-sm;
+  }
+  .sp-status-dot { @apply relative inline-flex h-2.5 w-2.5 rounded-full; }
+  .sp-status-dot::after { content:""; @apply absolute inset-0 rounded-full animate-pulseSoft bg-current; }
 }

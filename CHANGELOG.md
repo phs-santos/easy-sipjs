@@ -1,18 +1,28 @@
 # Changelog
 
-## [2.2.0] - 2026-02-17
+## [2.6.0] - 2026-07-01
 
 ### Adicionado
-- **Suporte ao JsSIP**: Adicionado `JsSIPProvider` para permitir o uso da biblioteca [JsSIP](https://jssip.net/) como motor de sinalização.
-- **Abstração Agnóstica**: Introduzido `SipInvitation`, `ISipUserAgentDelegate` e `ISipRegisterDelegate` para remover a dependência direta de tipos do `sip.js` na API pública.
-- **Callback `onTerminate`**: Adicionado evento `onTerminate` em `SipInvitation` e `ISipSession` para detectar o fim de chamadas de forma uniforme.
+- `createSoftphone()` com presets `asterisk`, `kamailio` e `generic`.
+- `DeviceManager` exposto em `client.devices` com listagem, permissão e evento de mudança de headset/câmera.
+- `diagnose()` para validar HTTPS, MediaDevices, permissão de microfone, speaker selection, registro SIP e health check.
+- `session.getQuality()` com score, nível, jitter, perda, RTT e recomendação operacional.
+- ICE self-healing básico com `restartIce()` + re-INVITE quando `iceConnectionState` entra em `failed`.
+- Redação segura de logs SIP via `redactSipLog()`.
+- Health check periódico opcional via `healthCheckIntervalMs`.
+- Resubscribe automático de presença/BLF após registro/reconexão.
 
 ### Alterado
-- **SipClient**: O construtor agora aceita uma opção `provider` ('sipjs' | 'jssip') ou um `customProvider` que implemente `ISipProvider`.
+- Softphone de exemplo redesenhado com UX/UI premium: glassmorphism, hierarquia visual, status cards, diagnóstico, health check, qualidade de chamada e paleta baseada em confiança/segurança.
+- `README.md` e `NPM.md` atualizados para explicar a API fácil e os novos recursos.
 
 ### Corrigido
-- **JsSIP Constructor**: Corrigido erro `UA is not a constructor` ao instanciar o UA do JsSIP.
+- Provider JsSIP implementa `getQuality()` para manter contrato `ISipSession` completo.
+- Logs SIP do exemplo deixam de exibir dados sensíveis quando a lib está com redaction ativo.
 
-### Removido
-- **Logger**: Removido `src/utils/logger.ts` que não estava sendo utilizado.
-- **Tipos Não Utilizados**: Limpeza de interfaces e propriedades legadas em `CallOptions` e `SipSession`.
+## [2.5.0] - 2026-07-01
+
+### Adicionado
+- API amigável `connect`, `disconnect`, `dial`, `accept`, `reject`, `reconnect`, `refreshRegistration`, `checkHealth`, `subscribePresence` e `unsubscribePresence`.
+- Eventos ricos de sessão e health check via SIP OPTIONS.
+- Suporte inicial a presença/BLF, DTMF `auto`, cleanup de tracks e build ESM NodeNext.

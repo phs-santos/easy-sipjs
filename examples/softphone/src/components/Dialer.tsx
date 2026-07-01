@@ -1,115 +1,92 @@
 import { useState } from "react";
-import { Phone, Delete, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Delete, Phone, ShieldCheck } from "lucide-react";
 import type { CallRecord } from "../types";
 
-interface Props {
-  onCall: (destination: string) => void;
-  recentNumbers: CallRecord[];
-  disabled?: boolean;
-}
+interface Props { onCall: (destination: string) => void; recentNumbers: CallRecord[]; disabled?: boolean; }
 
 const KEYS: { digit: string; letters?: string }[] = [
-  { digit: "1" },
-  { digit: "2", letters: "ABC" },
-  { digit: "3", letters: "DEF" },
-  { digit: "4", letters: "GHI" },
-  { digit: "5", letters: "JKL" },
-  { digit: "6", letters: "MNO" },
-  { digit: "7", letters: "PQRS" },
-  { digit: "8", letters: "TUV" },
-  { digit: "9", letters: "WXYZ" },
-  { digit: "*" },
-  { digit: "0", letters: "+" },
-  { digit: "#" },
+  { digit: "1" }, { digit: "2", letters: "ABC" }, { digit: "3", letters: "DEF" },
+  { digit: "4", letters: "GHI" }, { digit: "5", letters: "JKL" }, { digit: "6", letters: "MNO" },
+  { digit: "7", letters: "PQRS" }, { digit: "8", letters: "TUV" }, { digit: "9", letters: "WXYZ" },
+  { digit: "*" }, { digit: "0", letters: "+" }, { digit: "#" },
 ];
 
 export function Dialer({ onCall, recentNumbers, disabled }: Props) {
   const [value, setValue] = useState("");
 
-  const handleCall = () => {
-    if (!value.trim()) return;
-    onCall(value.trim());
-    setValue("");
-  };
+  const handleCall = () => { if (!value.trim()) return; onCall(value.trim()); setValue(""); };
 
   return (
-    <div className="flex flex-col items-center h-full pt-4">
-      <div className="w-full max-w-xs">
-        {/* Input */}
+    <div className="grid lg:grid-cols-[26rem_minmax(0,1fr)] gap-5 items-start">
+      <section className="sp-card p-6 md:p-7">
+        <div className="text-center mb-6">
+          <div className="mx-auto w-14 h-14 rounded-3xl bg-sp-blue/12 border border-sp-blue/20 flex items-center justify-center text-sp-blue shadow-glow">
+            <Phone size={24} />
+          </div>
+          <h2 className="text-xl font-black mt-4">Digite o ramal ou número</h2>
+          <p className="text-sm text-sp-muted mt-1">Discador limpo para teste rápido de chamada.</p>
+        </div>
+
         <div className="relative mb-5">
           <input
-            className="w-full bg-transparent text-center text-3xl font-light text-sp-text tracking-widest py-2 border-b border-sp-border focus:border-sp-green outline-none placeholder:text-sp-border placeholder:text-2xl transition-colors"
+            className="w-full bg-white/[0.035] border border-white/10 rounded-3xl text-center text-4xl font-light text-sp-text tracking-[0.22em] py-5 focus:border-sp-blue focus:ring-4 focus:ring-sp-blue/10 outline-none placeholder:text-sp-border placeholder:text-2xl transition-all"
             value={value}
             onChange={e => setValue(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleCall()}
             placeholder="_ _ _"
             autoFocus
           />
-          {value && (
-            <button
-              onClick={() => setValue(v => v.slice(0, -1))}
-              className="absolute right-0 top-1/2 -translate-y-1/2 text-sp-muted hover:text-sp-text transition-colors"
-            >
-              <Delete size={18} />
-            </button>
-          )}
+          {value && <button onClick={() => setValue(v => v.slice(0, -1))} className="absolute right-5 top-1/2 -translate-y-1/2 text-sp-muted hover:text-sp-text transition-colors"><Delete size={20} /></button>}
         </div>
 
-        {/* Keypad */}
-        <div className="grid grid-cols-3 gap-2 mb-5">
+        <div className="grid grid-cols-3 gap-2.5 mb-5">
           {KEYS.map(k => (
-            <button
-              key={k.digit}
-              onClick={() => setValue(v => v + k.digit)}
-              className="flex flex-col items-center justify-center py-3 rounded-xl bg-sp-surface border border-sp-border hover:bg-white/5 active:scale-95 transition-all select-none"
-            >
-              <span className="text-sp-text text-xl font-medium leading-none">{k.digit}</span>
-              {k.letters && (
-                <span className="text-[9px] text-sp-muted tracking-widest mt-0.5">{k.letters}</span>
-              )}
+            <button key={k.digit} onClick={() => setValue(v => v + k.digit)} className="sp-kbd-button flex flex-col items-center justify-center py-4">
+              <span className="text-sp-text text-2xl font-bold leading-none">{k.digit}</span>
+              {k.letters && <span className="text-[9px] text-sp-muted tracking-[0.24em] mt-1 font-bold">{k.letters}</span>}
             </button>
           ))}
         </div>
 
-        {/* Call button */}
-        <button
-          onClick={handleCall}
-          disabled={disabled || !value.trim()}
-          className="w-full py-3.5 rounded-2xl bg-sp-green text-black font-semibold hover:bg-green-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 text-base"
-        >
-          <Phone size={18} />
-          Ligar
+        <button onClick={handleCall} disabled={disabled || !value.trim()} className="w-full sp-button-primary py-4 flex items-center justify-center gap-2 text-lg">
+          <Phone size={19} /> Ligar agora
         </button>
 
-        {/* Recents */}
-        {recentNumbers.length > 0 && (
-          <div className="mt-6">
-            <p className="text-[10px] font-semibold text-sp-muted uppercase tracking-widest mb-2 px-1">Recentes</p>
-            <div className="space-y-0.5">
-              {recentNumbers.slice(0, 4).map(r => (
-                <button
-                  key={r.id}
-                  onClick={() => onCall(r.number)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-sp-surface transition-colors text-left group"
-                >
-                  <span className="text-sp-muted">
-                    {r.direction === "inbound"
-                      ? <ArrowDownLeft size={14} className="text-sp-green" />
-                      : <ArrowUpRight size={14} className="text-sp-muted" />}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-sp-text truncate">{r.displayName || r.number}</p>
-                    {r.displayName && (
-                      <p className="text-[11px] text-sp-muted truncate">{r.number}</p>
-                    )}
-                  </div>
-                  <Phone size={14} className="text-sp-muted group-hover:text-sp-green transition-colors shrink-0" />
-                </button>
-              ))}
-            </div>
+        {disabled && <p className="text-xs text-sp-amber mt-3 text-center">Aguardando registro SIP para liberar chamadas.</p>}
+      </section>
+
+      <section className="sp-card p-6 md:p-7 min-h-[32rem]">
+        <div className="flex items-center justify-between gap-3 mb-5">
+          <div>
+            <p className="text-xs text-sp-blue uppercase tracking-[0.22em] font-black">Atalhos inteligentes</p>
+            <h3 className="text-lg font-black mt-1">Recentes</h3>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-sp-green/10 border border-sp-green/20 flex items-center justify-center text-sp-green"><ShieldCheck size={18}/></div>
+        </div>
+
+        {recentNumbers.length === 0 ? (
+          <div className="h-80 rounded-3xl border border-dashed border-white/10 flex flex-col items-center justify-center text-center p-6">
+            <Phone size={28} className="text-sp-muted mb-3" />
+            <p className="font-bold">Sem chamadas recentes</p>
+            <p className="text-sm text-sp-muted mt-1">Após o primeiro teste, os contatos aparecem aqui para rediscagem rápida.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {recentNumbers.slice(0, 8).map(r => (
+              <button key={r.id} onClick={() => onCall(r.number)} className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/[0.035] border border-white/10 hover:bg-white/[0.07] hover:border-sp-blue/30 transition-all text-left group">
+                <span className="w-10 h-10 rounded-2xl bg-white/[0.06] flex items-center justify-center">
+                  {r.direction === "inbound" ? <ArrowDownLeft size={16} className="text-sp-green" /> : <ArrowUpRight size={16} className="text-sp-blue" />}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-sp-text font-semibold truncate">{r.displayName || r.number}</p>
+                  <p className="text-[11px] text-sp-muted truncate">{r.status} · {new Date(r.startedAt).toLocaleString("pt-BR")}</p>
+                </div>
+                <Phone size={15} className="text-sp-muted group-hover:text-sp-green transition-colors shrink-0" />
+              </button>
+            ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

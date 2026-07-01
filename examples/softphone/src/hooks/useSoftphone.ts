@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { SipClient } from "easy-sipjs";
-import type { SipConnectionState, SipInvitation, CallStats, ISipSession } from "easy-sipjs";
+import type { SipConnectionState, SipInvitation, CallStats, CallQualitySnapshot, ISipSession } from "easy-sipjs";
 import { useLocalStorage } from "./useLocalStorage";
 import type { StoredCredentials, DevicePrefs, CallRecord, MessageRecord, SipLogEntry } from "../types";
 
@@ -21,7 +21,9 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
   const client = useMemo(
     () =>
       new SipClient(credentials, {
+        preset: 'asterisk',
         provider: credentials.provider || 'sipjs',
+        healthCheckIntervalMs: 30000,
         sounds: {
           ringtone: devicePrefs.ringtone || undefined,
           ringback: devicePrefs.ringback || undefined,
@@ -215,10 +217,8 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     };
 
     const handleInvite = (inv: SipInvitation) => {
-      console.log(`[easy-sipjs][3] useSoftphone.handleInvite fired — from=${inv.remoteIdentity?.uri?.user}`);
       const number = inv.remoteIdentity.uri.user;
       const name = inv.remoteIdentity.displayName || undefined;
-      console.log('[easy-sipjs][3] calling setInvitation + setCallerInfo');
       setInvitation(inv);
       setCallerInfo({ number, name });
 
@@ -392,6 +392,10 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     return activeSessionState?.session.getStats();
   }, [activeSessionState]);
 
+  const fetchQuality = useCallback(async (): Promise<CallQualitySnapshot | undefined> => {
+    return activeSessionState?.session.getQuality();
+  }, [activeSessionState]);
+
   const sendSipMessage = useCallback(
     async (to: string, body: string) => {
       await client.sendMessage(to, body);
@@ -470,6 +474,7 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     setOutputDevice,
     setInputDevice,
     fetchStats,
+    fetchQuality,
     sendSipMessage,
     markMessagesRead,
     clearHistory,

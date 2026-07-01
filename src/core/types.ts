@@ -1,3 +1,15 @@
+export type SoftphonePreset = 'asterisk' | 'kamailio' | 'generic';
+export type HoldStrategy = 'sipjs-default' | 'asterisk-inactive' | 'asterisk-sendonly';
+
+export interface MediaRecoveryOptions {
+    /** Defaults to true for the asterisk/kamailio presets. */
+    enabled?: boolean;
+    /** Calls RTCPeerConnection.restartIce() when ICE enters `failed`. */
+    restartIceOnFailure?: boolean;
+    /** Defaults to 2. */
+    maxAttempts?: number;
+}
+
 export interface SipCredentials {
     domain: string;
     phone: string;
@@ -42,7 +54,7 @@ export type SipSessionStatus =
 export type DtmfMode = 'sip-info' | 'rtp-event' | 'auto';
 
 export interface DtmfOptions {
-    /** Defaults to `sip-info` because it is the most predictable mode with SIP PBXs. */
+    /** Defaults to the selected preset. Asterisk/Kamailio use `sip-info`; generic uses `auto`. */
     mode?: DtmfMode;
     /** Defaults to 160ms. */
     durationMs?: number;
@@ -85,6 +97,17 @@ export interface SipMessageEvent {
     contentType?: string;
 }
 
+export interface SipMediaStateEvent {
+    iceConnectionState?: RTCIceConnectionState;
+    connectionState?: RTCPeerConnectionState;
+    recoveryAttempt?: number;
+}
+
+export interface SipMediaFailureEvent {
+    reason: string;
+    cause?: unknown;
+}
+
 export interface SipSessionEventMap {
     state: [state: SipSessionStatus];
     progress: [event?: SipSessionProgressEvent];
@@ -99,6 +122,9 @@ export interface SipSessionEventMap {
     refer: [event: SipReferEvent];
     message: [event: SipMessageEvent];
     notify: [notification: unknown];
+    'media-state': [event: SipMediaStateEvent];
+    'media-failed': [event: SipMediaFailureEvent];
+    quality: [snapshot: CallQualitySnapshot];
 }
 
 export interface PresenceEvent {
@@ -130,12 +156,49 @@ export interface SipHealthStatus {
 }
 
 export interface CallStats {
+    /** Jitter in seconds, as returned by WebRTC stats. */
     jitter: number;
+    /** Packet loss percentage. */
     packetLoss: number;
+    /** RTT in seconds. */
     roundTripTime: number;
     codec: string;
     bytesSent: number;
     bytesReceived: number;
+}
+
+export interface CallQualitySnapshot extends CallStats {
+    score: number;
+    level: 'excellent' | 'good' | 'warning' | 'bad';
+    jitterMs: number;
+    packetLossPercent: number;
+    rttMs: number;
+    recommendation: string;
+    sampledAt: Date;
+}
+
+export interface SoftphoneDevice {
+    id: string;
+    label: string;
+    kind: 'microphone' | 'speaker' | 'camera';
+    rawKind: MediaDeviceKind;
+    isDefault: boolean;
+}
+
+export interface SoftphoneDiagnostics {
+    browser: string;
+    secureContext: boolean;
+    hasMediaDevices: boolean;
+    hasMicrophonePermission: boolean;
+    hasSpeakerSelection: boolean;
+    websocketConfigured: boolean;
+    websocketReachable?: boolean;
+    sipRegistered: boolean;
+    iceServersConfigured: boolean;
+    activeInput?: string;
+    activeOutput?: string;
+    warnings: string[];
+    checkedAt: Date;
 }
 
 /**
@@ -158,4 +221,21 @@ export interface SipInvitation {
 export interface SipRegisterResult {
     userAgent: any;
     registerer: any;
+}
+
+export interface CreateSoftphoneConfig {
+    preset?: SoftphonePreset;
+    domain: string;
+    extension: string;
+    password: string;
+    websocketUrl: string;
+    displayName?: string;
+    authUsername?: string;
+    iceServers?: RTCIceServer[];
+    debug?: boolean;
+    provider?: 'sipjs' | 'jssip';
+    sounds?: {
+        ringtone?: string;
+        ringback?: string;
+    };
 }

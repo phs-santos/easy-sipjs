@@ -19,6 +19,7 @@ import {
     SipInvitation,
     AnswerOptions,
     CallStats,
+    CallQualitySnapshot,
     DtmfOptions,
     SipSessionEventMap,
     SipSessionStatus,
@@ -30,6 +31,7 @@ import {
 } from "./types.js";
 import { handleStateChanges } from "./media.js";
 import { ensureSipPrefix, parseRTCStats } from "./utils.js";
+import { createCallQualitySnapshot } from "./call-quality.js";
 
 interface OutgoingRequestDelegate {
     onAccept?: (response: any) => void;
@@ -331,6 +333,12 @@ export class SipJSSession implements ISipSession {
         return parseRTCStats(pc);
     }
 
+    async getQuality(): Promise<CallQualitySnapshot> {
+        const snapshot = createCallQualitySnapshot(await this.getStats());
+        this.bus.emit('quality', snapshot);
+        return snapshot;
+    }
+
     private bindStateChanges(): void {
         this.session.stateChange.addListener((state: SessionState) => {
             const status = toSessionStatus(state);
@@ -345,6 +353,7 @@ export class SipJSSession implements ISipSession {
                     this.startedAt = new Date();
                     this.onConfirm?.();
                     this.bus.emit('established');
+                    this.bindPeerConnectionRecovery();
                     break;
                 case SessionState.Terminating:
                     this.bus.emit('terminating');
@@ -401,6 +410,49 @@ export class SipJSSession implements ISipSession {
                 this.emitTerminatedOnce();
             },
         };
+    }
+
+    private bindPeerConnectionRecovery(): void {
+        const pc = this.getPeerConnection();
+        if (!pc || (pc as any).__easySipjsRecoveryBound) return;
+        (pc as any).__easySipjsRecoveryBound = true;
+
+        let attempts = 0;
+        const maxAttempts = 2;
+
+        const emitState = () => {
+            this.bus.emit('media-state', {
+                iceConnectionState: pc.iceConnectionState,
+                connectionState: pc.connectionState,
+                recoveryAttempt: attempts,
+            });
+        };
+
+        pc.addEventListener('connectionstatechange', emitState);
+        pc.addEventListener('iceconnectionstatechange', async () => {
+            emitState();
+
+            if (pc.iceConnectionState !== 'failed') return;
+            if (attempts >= maxAttempts) {
+                this.bus.emit('media-failed', { reason: 'ICE failed and media recovery limit reached.' });
+                return;
+            }
+
+            attempts += 1;
+            try {
+                pc.restartIce?.();
+                if (this.session.state === SessionState.Established) {
+                    await (this.session as any).invite({ requestDelegate: {} });
+                }
+                this.bus.emit('media-state', {
+                    iceConnectionState: pc.iceConnectionState,
+                    connectionState: pc.connectionState,
+                    recoveryAttempt: attempts,
+                });
+            } catch (error) {
+                this.bus.emit('media-failed', { reason: 'ICE restart/re-INVITE failed.', cause: error });
+            }
+        });
     }
 
     private async sendDtmfInfo(tone: string, durationMs: number): Promise<void> {

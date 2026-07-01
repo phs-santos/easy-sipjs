@@ -9,14 +9,21 @@ import {
     PresenceSubscribeOptions,
     PresenceEvent,
     DtmfOptions,
+    SoftphonePreset,
+    CreateSoftphoneConfig,
+    SoftphoneDiagnostics,
 } from "./core/types.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider.js";
 import { SipJSProvider } from "./core/sipjs-provider.js";
 import { JsSIPProvider } from "./core/jssip-provider.js";
 import { SipAudioSynthesizer } from "./core/audio-synthesizer.js";
 import { SipEventEmitter, SipEventMap } from "./core/event-emitter.js";
+import { DeviceManager } from "./core/device-manager.js";
+import { redactSipLog } from "./core/logger.js";
 
 export interface SipClientOptions {
+    /** Use a preset so app developers do not need to know SIP.js internals. */
+    preset?: SoftphonePreset;
     provider?: 'sipjs' | 'jssip';
     customProvider?: ISipProvider;
     sounds?: {
@@ -31,6 +38,10 @@ export interface SipClientOptions {
     reconnectDelay?: number;
     maxReconnectDelay?: number;
     registrationExpiringBuffer?: number;
+    /** Defaults to true. Redacts Authorization, nonce, usernames and secrets before forwarding SIP logs. */
+    logRedaction?: boolean;
+    /** Optional periodic health check. Disabled by default; pass e.g. 30000. */
+    healthCheckIntervalMs?: number;
 }
 
 export class SipClient {
@@ -39,6 +50,7 @@ export class SipClient {
     private connectionState: SipConnectionState = 'disconnected';
     private provider: ISipProvider;
     private emitter = new SipEventEmitter();
+    public readonly devices = new DeviceManager();
 
     public onUserAgent: ISipUserAgentDelegate = {};
     public onRegister: ISipRegisterDelegate = {};
@@ -64,6 +76,8 @@ export class SipClient {
     private synthesizer = new SipAudioSynthesizer();
 
     private operationLock: Promise<void> = Promise.resolve();
+    private presenceSubscriptions = new Map<string, PresenceSubscribeOptions | undefined>();
+    private healthTimer?: ReturnType<typeof setInterval>;
 
     public static isVideoCall(invitation: SipInvitation): boolean {
         const raw = invitation.raw;
@@ -106,7 +120,7 @@ export class SipClient {
     constructor(private credentials: SipCredentials, private options: SipClientOptions = {}) {
         if (options.customProvider) {
             this.provider = options.customProvider;
-        } else if (options.provider === 'jssip') {
+        } else if ((options.provider ?? (options.preset === 'generic' ? 'sipjs' : 'sipjs')) === 'jssip') {
             this.provider = new JsSIPProvider();
         } else {
             this.provider = new SipJSProvider();
@@ -120,6 +134,11 @@ export class SipClient {
         this.autoRefreshRegistration = options.autoRefreshRegistration ?? true;
 
         this.setupNetworkMonitoring();
+        if (options.healthCheckIntervalMs) {
+            this.healthTimer = setInterval(() => {
+                this.checkHealth().catch(() => undefined);
+            }, options.healthCheckIntervalMs);
+        }
     }
 
     // ─── Friendly aliases ────────────────────────────────────────────────────
@@ -223,6 +242,11 @@ export class SipClient {
         return result;
     }
 
+    private handleSipLog = (level: string, category: string, label: string, content: string) => {
+        const safeContent = this.options.logRedaction === false ? content : redactSipLog(content);
+        this.onSipLog?.(level, category, label, safeContent);
+    };
+
     // ─── Register / connect ──────────────────────────────────────────────────
 
     async register(): Promise<SipRegisterResult> {
@@ -317,6 +341,9 @@ export class SipClient {
                 this.scheduleRegistrationExpiry();
                 this.onRegister.onAccept?.(data);
                 this.emitter.emit('registered');
+                this.restorePresenceSubscriptions().catch(error => {
+                    this.onSipLog?.('warn', 'sip.Client', '', `Falha ao restaurar inscrições de presença: ${error}`);
+                });
             },
             onReject: (error) => {
                 this.setConnectionState('error');
@@ -332,7 +359,7 @@ export class SipClient {
                 this.credentials,
                 internalUserAgentDelegate,
                 internalRegisterDelegate,
-                this.onSipLog
+                this.handleSipLog
             );
         } catch (error) {
             this.setConnectionState('error');
@@ -479,12 +506,21 @@ export class SipClient {
         if (!this.provider.subscribePresence) {
             throw new Error("Presence subscription is not supported by the selected SIP provider.");
         }
+        this.presenceSubscriptions.set(target, options);
         await this.provider.subscribePresence(target, options);
     }
 
     async unsubscribePresence(target: string): Promise<void> {
+        this.presenceSubscriptions.delete(target);
         if (!this.provider.unsubscribePresence) return;
         await this.provider.unsubscribePresence(target);
+    }
+
+    private async restorePresenceSubscriptions(): Promise<void> {
+        if (!this.provider.subscribePresence || this.presenceSubscriptions.size === 0) return;
+        for (const [target, options] of this.presenceSubscriptions.entries()) {
+            await this.provider.subscribePresence(target, options).catch(() => undefined);
+        }
     }
 
     onPresence(listener: (presence: PresenceEvent) => void): this {
@@ -661,6 +697,46 @@ export class SipClient {
         if (active) await active.bye();
     }
 
+    async getQuality() {
+        return this.activeSession?.getQuality();
+    }
+
+    async diagnose(): Promise<SoftphoneDiagnostics> {
+        const warnings: string[] = [];
+        const secureContext = typeof window === 'undefined' ? true : window.isSecureContext;
+        const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+        const hasSpeakerSelection = typeof HTMLMediaElement !== 'undefined' && typeof (HTMLMediaElement.prototype as any).setSinkId === 'function';
+        let hasMicrophonePermission = false;
+
+        if (!secureContext) warnings.push('WebRTC exige HTTPS ou localhost para microfone/câmera funcionar corretamente.');
+        if (!hasMediaDevices) warnings.push('Browser não expõe navigator.mediaDevices.getUserMedia.');
+        if (!hasSpeakerSelection) warnings.push('Este browser não permite selecionar saída de áudio via setSinkId.');
+
+        try {
+            const devices = await this.devices.list();
+            hasMicrophonePermission = devices.some(device => device.kind === 'microphone' && !device.label.includes('sem permissão'));
+        } catch {
+            warnings.push('Não foi possível listar dispositivos de mídia.');
+        }
+
+        const health = await this.checkHealth().catch(() => undefined);
+        const diagnostics: SoftphoneDiagnostics = {
+            browser: typeof navigator === 'undefined' ? 'server' : navigator.userAgent,
+            secureContext,
+            hasMediaDevices,
+            hasMicrophonePermission,
+            hasSpeakerSelection,
+            websocketConfigured: !!this.credentials.server,
+            websocketReachable: health?.websocketConnected,
+            sipRegistered: health?.registered ?? this.connectionState === 'registered',
+            iceServersConfigured: !!this.credentials.iceServers?.length,
+            warnings,
+            checkedAt: new Date(),
+        };
+
+        return diagnostics;
+    }
+
     async sendMessage(destination: string, body: string): Promise<void> {
         await this.provider.sendMessage(destination, body);
     }
@@ -696,6 +772,10 @@ export class SipClient {
             clearTimeout(this.registrationExpiryTimer);
             this.registrationExpiryTimer = undefined;
         }
+        if (this.healthTimer) {
+            clearInterval(this.healthTimer);
+            this.healthTimer = undefined;
+        }
         this.reconnectAttempt = 0;
     }
 }
@@ -705,3 +785,35 @@ export * from "./core/provider.js";
 export * from "./core/sipjs-provider.js";
 export * from "./core/jssip-provider.js";
 export * from "./core/event-emitter.js";
+export * from "./core/device-manager.js";
+export * from "./core/call-quality.js";
+export * from "./core/logger.js";
+
+export function createSoftphone(config: CreateSoftphoneConfig): SipClient {
+    const preset = config.preset ?? 'asterisk';
+    const isGeneric = preset === 'generic';
+
+    return new SipClient(
+        {
+            domain: config.domain,
+            phone: config.extension,
+            secret: config.password,
+            nameexten: config.displayName,
+            authorizationUsername: config.authUsername,
+            server: config.websocketUrl,
+            iceServers: config.iceServers,
+            debug: config.debug ?? false,
+            userAgentString: `easy-sipjs/${preset}`,
+        },
+        {
+            preset,
+            provider: config.provider ?? 'sipjs',
+            sounds: config.sounds,
+            autoReconnect: true,
+            autoRefreshRegistration: true,
+            logRedaction: true,
+            healthCheckIntervalMs: isGeneric ? undefined : 30000,
+            registrationExpiringBuffer: 45,
+        }
+    );
+}

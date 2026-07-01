@@ -1,8 +1,9 @@
 import JsSIP from "jssip";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types.js";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot } from "./types.js";
 import { assignStream } from "./media.js";
 import { ensureSipPrefix, parseRTCStats } from "./utils.js";
+import { createCallQualitySnapshot } from "./call-quality.js";
 
 export class JsSIPSession implements ISipSession {
     public readonly id: string;
@@ -100,7 +101,7 @@ export class JsSIPSession implements ISipSession {
         if (typeof target === "string") {
             this.session.refer(target);
         } else {
-            const rawSession = (target as JsSIPSession).getRawSession();
+            const rawSession = (target as unknown as JsSIPSession).getRawSession();
             if (!rawSession) throw new Error("Cannot access raw session for attended transfer");
             this.session.refer(rawSession.remote_identity.uri.toString(), { replaces: rawSession });
         }
@@ -176,6 +177,10 @@ export class JsSIPSession implements ISipSession {
         const pc = this.session.connection as RTCPeerConnection | undefined;
         if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
         return parseRTCStats(pc);
+    }
+
+    async getQuality(): Promise<CallQualitySnapshot> {
+        return createCallQualitySnapshot(await this.getStats());
     }
 }
 

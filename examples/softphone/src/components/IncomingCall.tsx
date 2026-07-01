@@ -1,43 +1,38 @@
-import { Phone, PhoneOff } from "lucide-react";
+import { Phone, PhoneOff, Waves } from "lucide-react";
 import type { CallerInfo } from "../hooks/useSoftphone";
 
-interface Props {
-  callerInfo: CallerInfo;
-  onAnswer: () => void;
-  onReject: () => void;
-}
+interface Props { callerInfo: CallerInfo; onAnswer: () => void; onReject: () => void; }
 
 export function IncomingCall({ callerInfo, onAnswer, onReject }: Props) {
-  console.log(`[easy-sipjs][4] IncomingCall RENDERED — from=${callerInfo.number}`);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-sp-surface border border-sp-border rounded-2xl p-8 w-80 text-center shadow-2xl">
-        <div className="animate-ring flex items-center justify-center w-16 h-16 rounded-full bg-sp-green/10 border-2 border-sp-green mx-auto mb-4">
-          <Phone size={28} className="text-sp-green" />
-        </div>
-        <p className="text-sp-muted text-sm mb-1">Chamada recebida</p>
-        <p className="text-sp-text text-2xl font-bold mb-1 truncate">
-          {callerInfo.name || callerInfo.number}
-        </p>
-        {callerInfo.name && (
-          <p className="text-sp-muted text-sm mb-6">{callerInfo.number}</p>
-        )}
-        {!callerInfo.name && <div className="mb-6" />}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020817]/72 backdrop-blur-xl p-5">
+      <div className="relative w-full max-w-sm sp-card p-7 text-center overflow-hidden">
+        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-64 h-64 bg-sp-green/20 rounded-full blur-3xl" />
+        <div className="relative">
+          <div className="mx-auto mb-5 w-20 h-20 rounded-[2rem] bg-sp-green/12 border border-sp-green/25 flex items-center justify-center text-sp-green animate-ring">
+            <Phone size={32} />
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sp-blue/10 border border-sp-blue/20 text-sp-blue text-xs font-black uppercase tracking-wider">
+            <Waves size={13}/> Chamada recebida
+          </div>
+          <p className="text-sp-text text-3xl font-black mt-4 truncate">{callerInfo.name || callerInfo.number}</p>
+          {callerInfo.name && <p className="text-sp-muted text-sm mt-1">{callerInfo.number}</p>}
+          <p className="text-sp-muted text-sm mt-4">Atenda para iniciar áudio WebRTC seguro.</p>
 
-        <div className="flex gap-6 justify-center">
-          <button onClick={onReject} className="flex flex-col items-center gap-1 group">
-            <div className="w-16 h-16 rounded-full bg-sp-red flex items-center justify-center group-hover:bg-red-400 transition-colors">
-              <PhoneOff size={24} className="text-white" />
-            </div>
-            <span className="text-xs text-sp-muted">Rejeitar</span>
-          </button>
-
-          <button onClick={onAnswer} className="flex flex-col items-center gap-1 group">
-            <div className="w-16 h-16 rounded-full bg-sp-green flex items-center justify-center group-hover:bg-green-400 transition-colors">
-              <Phone size={24} className="text-black" />
-            </div>
-            <span className="text-xs text-sp-muted">Atender</span>
-          </button>
+          <div className="grid grid-cols-2 gap-4 mt-7">
+            <button onClick={onReject} className="group flex flex-col items-center gap-2">
+              <div className="w-16 h-16 rounded-[1.7rem] bg-sp-red text-white flex items-center justify-center group-hover:bg-red-400 transition-all shadow-lg shadow-sp-red/25">
+                <PhoneOff size={25} />
+              </div>
+              <span className="text-xs text-sp-muted font-semibold">Rejeitar</span>
+            </button>
+            <button onClick={onAnswer} className="group flex flex-col items-center gap-2">
+              <div className="w-16 h-16 rounded-[1.7rem] bg-gradient-to-br from-sp-emerald to-sp-green text-[#04130a] flex items-center justify-center group-hover:brightness-110 transition-all shadow-success">
+                <Phone size={25} />
+              </div>
+              <span className="text-xs text-sp-muted font-semibold">Atender</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

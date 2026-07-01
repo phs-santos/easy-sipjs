@@ -1,8 +1,6 @@
 # easy-sipjs
 
-Uma camada de abstração de alto nível sobre **SIP.js** e **JsSIP** para criar softphones WebRTC sem expor o usuário da biblioteca ao boilerplate do SIP.js.
-
-A ideia é simples: quem usa a lib configura **ramal, domínio, senha e WebSocket**. A biblioteca cuida de `UserAgent`, `Registerer`, `Inviter`, reconexão, refresh de registro, eventos de sessão, DTMF, mídia, transferência, presença/BLF e health check.
+SDK de softphone WebRTC/SIP de alto nível sobre **SIP.js** e **JsSIP**. A proposta é simples: quem consome a biblioteca informa ramal, domínio, senha e WebSocket; a lib cuida de registro, reconexão, refresh, mídia, DTMF, health check, qualidade de chamada, devices, presença/BLF e logs seguros.
 
 ---
 
@@ -14,25 +12,50 @@ npm install easy-sipjs
 
 ---
 
-## Recursos principais
+## O jeito mais fácil
 
-- 🔌 **API simples para o consumidor**: `connect()`, `dial()`, `accept()`, `reject()`, `hangup()` e `disconnect()`.
-- 🧠 **SIP.js encapsulado**: o usuário não precisa configurar `UserAgent`, `Registerer`, `Inviter` ou `SessionState`.
-- 🔁 **Registro resiliente**: `refreshRegistration()` e renovação automática de REGISTER por padrão.
-- 🌐 **Reconexão inteligente**: usa `UserAgent.reconnect()` quando disponível e fallback controlado quando não estiver.
-- 🩺 **Health check**: `checkHealth()` valida WebSocket, registro, sessões ativas e SIP OPTIONS ping no provider SIP.js.
-- 📞 **Eventos ricos de sessão**: `progress`, `established`, `terminated`, `failed`, `dtmf`, `refer`, `hold`, `unhold`.
-- 🎧 **Mídia WebRTC pronta**: binding de elemento remoto/local, troca de microfone, saída de áudio e cleanup de tracks.
-- 🔢 **DTMF flexível**: `sip-info`, `rtp-event` ou `auto`.
-- 🔀 **Transferência**: transferência cega e atendida via REFER.
-- 👀 **Presença/BLF**: `subscribePresence()` com eventos normalizados.
-- 🔔 **Sons automáticos**: ringtone e ringback opcionais, com fallback por Web Audio API.
-- 🧱 **Provider agnóstico**: SIP.js por padrão, JsSIP opcional.
-- 📦 **ESM compatível**: build em NodeNext com imports `.js` válidos.
+```ts
+import { createSoftphone } from 'easy-sipjs';
+
+const phone = createSoftphone({
+  preset: 'asterisk',
+  domain: 'pbx.example.com',
+  extension: '1001',
+  password: 'senha-do-ramal',
+  websocketUrl: 'wss://pbx.example.com:8089/ws',
+});
+
+phone.on('invite', invitation => phone.accept(invitation));
+phone.on('health', status => console.log(status));
+
+await phone.connect();
+await phone.dial('4002');
+```
+
+O consumidor não precisa configurar `UserAgent`, `Registerer`, `Inviter`, `SessionState`, re-REGISTER ou detalhes internos do SIP.js.
 
 ---
 
-## Uso mais simples
+## Recursos principais
+
+- **API simples**: `connect()`, `dial()`, `accept()`, `reject()`, `hangup()`, `disconnect()`.
+- **Presets**: `asterisk`, `kamailio` e `generic` via `createSoftphone()`.
+- **Registro resiliente**: refresh automático de REGISTER e reconexão controlada.
+- **Health check SIP**: `checkHealth()` com WebSocket, registro e SIP OPTIONS no provider SIP.js.
+- **Diagnóstico de ambiente**: `diagnose()` valida HTTPS, permissões, mídia, speaker selection e registro.
+- **DeviceManager**: `client.devices.list()`, `requestPermissions()`, `onChanged()`.
+- **Qualidade de chamada**: `session.getQuality()` retorna score, jitter, perda, RTT e recomendação.
+- **ICE self-healing**: tentativa de `restartIce()` + re-INVITE quando a mídia falha.
+- **DTMF flexível**: `sip-info`, `rtp-event` ou `auto`.
+- **Transferência**: blind e attended transfer via REFER.
+- **Presença/BLF**: `subscribePresence()` com status normalizados.
+- **Logs seguros**: redaction de Authorization, nonce, response, secrets e usuários SIP.
+- **ESM correto**: NodeNext com imports `.js` válidos.
+- **Exemplo softphone premium**: UI de demonstração com UX de call center.
+
+---
+
+## Uso avançado com `SipClient`
 
 ```ts
 import { SipClient } from 'easy-sipjs';
@@ -43,90 +66,73 @@ const client = new SipClient({
   secret: 'senha-do-ramal',
   server: 'wss://rtc.meudominio.com:8089/ws',
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-});
-
-client.on('connection-state', state => {
-  console.log('estado:', state);
-});
-
-client.on('invite', async invitation => {
-  await client.accept(invitation, {
-    remoteElement: document.querySelector('#remoteAudio') as HTMLAudioElement,
-  });
-});
-
-await client.connect();
-
-const session = await client.dial('4002', {
-  remoteElement: document.querySelector('#remoteAudio') as HTMLAudioElement,
-});
-
-await session.sendDTMF('1');
-await client.hangup();
-```
-
----
-
-## Configuração
-
-```ts
-const client = new SipClient({
-  domain: 'sip.meudominio.com',
-  phone: '4001',
-  secret: 'senha-do-ramal',
-  server: 'wss://rtc.meudominio.com/ws',
-  authorizationUsername: '4001',
-  nameexten: 'Agente 4001',
-  userAgentString: 'MinhaCentral/1.0.0',
-  debug: false,
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-  ],
 }, {
+  preset: 'asterisk',
   provider: 'sipjs',
   autoReconnect: true,
   autoRefreshRegistration: true,
-  sounds: {
-    ringtone: '/sounds/incoming.mp3',
-    ringback: '/sounds/ringback.mp3',
-  },
+  logRedaction: true,
+  healthCheckIntervalMs: 30000,
 });
+
+client.on('connection-state', state => console.log('estado:', state));
+client.on('invite', invitation => client.accept(invitation));
+
+await client.connect();
 ```
 
 ---
 
-## Eventos principais
+## Devices
 
 ```ts
-client.on('registered', () => console.log('registrado'));
-client.on('register-failed', err => console.error('falha no registro', err));
-client.on('disconnect', err => console.warn('desconectou', err));
-client.on('health', status => console.log(status));
+await client.devices.requestPermissions({ audio: true });
 
-client.on('session-established', session => {
-  console.log('chamada atendida', session.id);
+const devices = await client.devices.list();
+const microphones = await client.devices.microphones();
+const speakers = await client.devices.speakers();
+
+client.devices.onChanged(devices => {
+  console.log('headset/câmera mudou', devices);
 });
 
-client.on('session-failed', (session, event) => {
-  console.log('chamada falhou', session.id, event.statusCode, event.reasonPhrase);
-});
-
-client.on('session-terminated', session => {
-  console.log('chamada encerrada', session.id);
-});
+client.devices.watch();
 ```
 
-Cada sessão também tem eventos próprios:
+---
+
+## Qualidade e estatísticas
 
 ```ts
-session.on?.('progress', event => {
-  if (event?.hasEarlyMedia) {
-    console.log('early media detectada');
-  }
-});
+const stats = await session.getStats();
+const quality = await session.getQuality();
 
-session.on?.('dtmf', event => console.log('DTMF:', event.tone));
-session.on?.('refer', event => console.log('REFER recebido:', event));
+console.log(quality.score, quality.level, quality.recommendation);
+```
+
+Exemplo de retorno:
+
+```ts
+{
+  score: 92,
+  level: 'excellent',
+  jitterMs: 8,
+  packetLossPercent: 0.2,
+  rttMs: 74,
+  recommendation: 'Áudio estável. Condição ideal para atendimento.'
+}
+```
+
+---
+
+## Health check e diagnóstico
+
+```ts
+const health = await client.checkHealth();
+const diagnostics = await client.diagnose();
+
+console.log(health.registered, health.lastPingLatencyMs);
+console.log(diagnostics.warnings);
 ```
 
 ---
@@ -144,8 +150,8 @@ await session.sendDTMF('1', { mode: 'sip-info', durationMs: 160 });
 await session.sendDTMF('2', { mode: 'rtp-event' });
 await session.sendDTMF('#', { mode: 'auto' });
 
-await session.transfer('4003');          // transferência cega
-await session.transfer(outraSession);    // transferência atendida
+await session.transfer('4003');
+await session.transfer(outraSession);
 
 await session.setAudioInput('device-id');
 await session.setAudioOutput('speaker-id');
@@ -153,27 +159,7 @@ session.setRemoteVolume(1.4);
 
 await session.shareScreen();
 await session.stopScreenSharing();
-
-const stats = await session.getStats();
-console.log(stats);
 ```
-
----
-
-## Health check
-
-```ts
-const health = await client.checkHealth();
-
-console.log({
-  websocket: health.websocketConnected,
-  registered: health.registered,
-  activeSessions: health.activeSessions,
-  ping: health.lastPingLatencyMs,
-});
-```
-
-No provider SIP.js, o health check tenta um **SIP OPTIONS ping** para validar se o servidor SIP responde no nível de aplicação, não apenas se o browser está online.
 
 ---
 
@@ -185,8 +171,6 @@ client.onPresence(event => {
 });
 
 await client.subscribePresence('4002');
-
-// BLF/dialog-info, quando suportado pelo PBX/proxy:
 await client.subscribePresence('4003', { event: 'dialog' });
 ```
 
@@ -198,9 +182,27 @@ Status normalizados:
 
 ---
 
-## Compatibilidade com API antiga
+## Exemplo visual
 
-Os métodos antigos continuam funcionando:
+O projeto `examples/softphone` foi redesenhado para demonstração com clientes:
+
+- paleta escura para reduzir fadiga;
+- azul para confiança e tecnologia;
+- verde para ação segura/registrado/atender;
+- âmbar para atenção sem pânico;
+- vermelho apenas para risco, falha e desligar;
+- cards com glassmorphism, hierarquia clara e CTAs grandes;
+- painel de qualidade, monitor técnico, health check e diagnóstico.
+
+```bash
+cd examples/softphone
+npm install
+npm run dev
+```
+
+---
+
+## Compatibilidade com API antiga
 
 ```ts
 await client.register();
@@ -209,18 +211,4 @@ await client.answer(invitation, {});
 await client.unregister();
 ```
 
-Callbacks antigos também continuam disponíveis:
-
-```ts
-client.onRegister.onAccept = () => {};
-client.onUserAgent.onInvite = invitation => {};
-session.onTerminate = () => {};
-```
-
-Para código novo, prefira os eventos `client.on(...)` e `session.on(...)`.
-
----
-
-## Licença
-
-MIT
+Callbacks antigos continuam disponíveis, mas para código novo prefira `client.on(...)` e `session.on(...)`.
