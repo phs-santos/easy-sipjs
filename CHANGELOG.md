@@ -9,11 +9,9 @@
 
 ### Alterado
 - **SipClient**: O construtor agora aceita uma opção `provider` ('sipjs' | 'jssip') ou um `customProvider` que implemente `ISipProvider`.
-- **Demo**: Atualizado o projeto de exemplo para utilizar as novas abstrações genéricas e suporte a múltiplos providers.
 
 ### Corrigido
 - **JsSIP Constructor**: Corrigido erro `UA is not a constructor` ao instanciar o UA do JsSIP.
-- **Module Resolution**: Corrigido erro de "Cannot find module 'easy-sipjs'" no demo devido a caminho relativo incorreto no `package.json`.
 
 ### Removido
 - **Logger**: Removido `src/utils/logger.ts` que não estava sendo utilizado.

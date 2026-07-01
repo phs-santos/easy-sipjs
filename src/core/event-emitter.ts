@@ -1,4 +1,5 @@
-import { SipConnectionState, SipInvitation } from './types.js';
+import { PresenceEvent, SipConnectionState, SipHealthStatus, SipInvitation, SipResponseEvent, SipSessionEventMap, SipSessionStatus } from './types.js';
+import { ISipSession } from './provider.js';
 
 export type SipEventMap = {
     connect: [];
@@ -9,6 +10,17 @@ export type SipEventMap = {
     invite: [invitation: SipInvitation];
     message: [message: any];
     notify: [notification: any];
+    refer: [referral: any];
+    subscribe: [subscription: any];
+    presence: [presence: PresenceEvent];
+    health: [status: SipHealthStatus];
+    response: [event: SipResponseEvent];
+    session: [session: ISipSession];
+    'session-state': [session: ISipSession, state: SipSessionStatus];
+    'session-progress': [session: ISipSession, event?: SipSessionEventMap['progress'][0]];
+    'session-established': [session: ISipSession];
+    'session-terminated': [session: ISipSession, event?: SipSessionEventMap['terminated'][0]];
+    'session-failed': [session: ISipSession, event: SipSessionEventMap['failed'][0]];
     'connection-state': [state: SipConnectionState];
 };
 
@@ -34,7 +46,7 @@ export class SipEventEmitter {
     emit<K extends keyof SipEventMap>(event: K, ...args: SipEventMap[K]): void {
         const arr = this.listeners[event];
         if (!arr) return;
-        for (const listener of arr as Listener<any[]>[]) {
+        for (const listener of [...arr] as Listener<any[]>[]) {
             try {
                 listener(...args);
             } catch (err) {

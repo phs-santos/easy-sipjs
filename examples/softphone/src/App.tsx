@@ -150,7 +150,7 @@ function Softphone({
                 sipLogs={sp.sipLogs}
                 sessionStates={sp.sessionStates}
                 callHistoryCount={sp.callHistory.length}
-                onReconnect={() => sp.client.register().catch(() => {})}
+                onReconnect={() => sp.client.reconnect().catch(() => sp.client.connect().catch(() => {}))}
               />
             )}
           </>

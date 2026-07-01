@@ -5,6 +5,10 @@ import {
     SipInvitation,
     AnswerOptions,
     SipConnectionState,
+    SipHealthStatus,
+    PresenceSubscribeOptions,
+    PresenceEvent,
+    DtmfOptions,
 } from "./core/types.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider.js";
 import { SipJSProvider } from "./core/sipjs-provider.js";
@@ -19,6 +23,10 @@ export interface SipClientOptions {
         ringtone?: string;
         ringback?: string;
     };
+    /** Defaults to true. Keeps REGISTER alive without forcing the app to know about SIP timers. */
+    autoRefreshRegistration?: boolean;
+    /** Defaults to true. Reconnects after unexpected transport/network disconnects. */
+    autoReconnect?: boolean;
     maxReconnectAttempts?: number;
     reconnectDelay?: number;
     maxReconnectDelay?: number;
@@ -39,14 +47,17 @@ export class SipClient {
     public onSipLog?: (level: string, category: string, label: string, content: string) => void;
 
     private intentionalDisconnect = false;
-    private reconnectTimer?: any;
+    private reconnectTimer?: ReturnType<typeof setTimeout>;
     private reconnectAttempt = 0;
     private maxReconnectAttempts: number;
     private reconnectDelay: number;
     private maxReconnectDelay: number;
+    private autoReconnect: boolean;
+    private autoRefreshRegistration: boolean;
 
-    private registrationExpiryTimer?: any;
+    private registrationExpiryTimer?: ReturnType<typeof setTimeout>;
     private registrationExpiringBuffer: number;
+    private networkMonitoringEnabled = false;
 
     private ringtoneAudio?: HTMLAudioElement;
     private ringbackAudio?: HTMLAudioElement;
@@ -56,11 +67,8 @@ export class SipClient {
 
     public static isVideoCall(invitation: SipInvitation): boolean {
         const raw = invitation.raw;
-        if (raw.request && raw.request.body) {
-            const body = raw.request.body;
-            return body.includes("m=video") && !body.includes("m=video 0");
-        }
-        return false;
+        const body = raw?.request?.body;
+        return typeof body === 'string' && body.includes("m=video") && !body.includes("m=video 0");
     }
 
     public static async requestPermissions(options: { audio?: boolean, video?: boolean } = { audio: true }): Promise<boolean> {
@@ -95,24 +103,48 @@ export class SipClient {
         } catch { return []; }
     }
 
-    constructor(private credentials: SipCredentials, private options?: SipClientOptions) {
-        if (options?.customProvider) {
+    constructor(private credentials: SipCredentials, private options: SipClientOptions = {}) {
+        if (options.customProvider) {
             this.provider = options.customProvider;
-        } else if (options?.provider === 'jssip') {
+        } else if (options.provider === 'jssip') {
             this.provider = new JsSIPProvider();
         } else {
             this.provider = new SipJSProvider();
         }
 
-        this.maxReconnectAttempts = options?.maxReconnectAttempts ?? 10;
-        this.reconnectDelay = options?.reconnectDelay ?? 5000;
-        this.maxReconnectDelay = options?.maxReconnectDelay ?? 60000;
-        this.registrationExpiringBuffer = options?.registrationExpiringBuffer ?? 30;
+        this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
+        this.reconnectDelay = options.reconnectDelay ?? 5000;
+        this.maxReconnectDelay = options.maxReconnectDelay ?? 60000;
+        this.registrationExpiringBuffer = options.registrationExpiringBuffer ?? 30;
+        this.autoReconnect = options.autoReconnect ?? true;
+        this.autoRefreshRegistration = options.autoRefreshRegistration ?? true;
 
         this.setupNetworkMonitoring();
     }
 
-    // ─── EventEmitter ─────────────────────────────────────────────────────────
+    // ─── Friendly aliases ────────────────────────────────────────────────────
+
+    async connect(): Promise<SipRegisterResult> { return this.register(); }
+    async disconnect(): Promise<void> { return this.unregister(); }
+
+    async dial(destination: string, options: Omit<CallOptions, 'destination'> = {}): Promise<ISipSession> {
+        return this.call({ ...options, destination });
+    }
+
+    async accept(invitation: SipInvitation, options: AnswerOptions = {}): Promise<ISipSession> {
+        return this.answer(invitation, options);
+    }
+
+    async reject(invitation?: SipInvitation): Promise<void> {
+        if (invitation) {
+            this.stopRingtone();
+            await invitation.reject();
+            return;
+        }
+        await this.hangup();
+    }
+
+    // ─── EventEmitter ────────────────────────────────────────────────────────
 
     on<K extends keyof SipEventMap>(event: K, listener: (...args: SipEventMap[K]) => void): this {
         this.emitter.on(event, listener);
@@ -124,18 +156,22 @@ export class SipClient {
         return this;
     }
 
-    // ─── Network monitoring ───────────────────────────────────────────────────
+    // ─── Network monitoring ──────────────────────────────────────────────────
 
     private setupNetworkMonitoring() {
+        if (this.networkMonitoringEnabled) return;
         if (typeof window !== 'undefined' && window.addEventListener) {
             window.addEventListener('online', this.handleOnline);
+            this.networkMonitoringEnabled = true;
         }
     }
 
     private cleanupNetworkMonitoring() {
+        if (!this.networkMonitoringEnabled) return;
         if (typeof window !== 'undefined' && window.removeEventListener) {
             window.removeEventListener('online', this.handleOnline);
         }
+        this.networkMonitoringEnabled = false;
     }
 
     private handleOnline = () => {
@@ -145,7 +181,7 @@ export class SipClient {
         }
     };
 
-    // ─── Session management ───────────────────────────────────────────────────
+    // ─── Session management ──────────────────────────────────────────────────
 
     public get activeSession(): ISipSession | undefined {
         if (this.activeSessionId) {
@@ -156,7 +192,7 @@ export class SipClient {
     }
 
     public getSessions(): ISipSession[] {
-        return this.sessions;
+        return [...this.sessions];
     }
 
     public setActiveSession(sessionOrId: ISipSession | string | undefined) {
@@ -181,29 +217,35 @@ export class SipClient {
         }
     }
 
-    // ─── Operation locking ──────────────────────────────────────────────────
-    // register()/unregister() mutate shared provider state (UserAgent, Registerer).
-    // If they overlap — e.g. a React effect cleanup firing unregister() while a
-    // prior register() is still awaiting transport setup — the provider can be
-    // torn down mid-construction, crashing with errors like "Cannot read
-    // properties of undefined". Serializing them here makes that impossible.
     private enqueue<T>(op: () => Promise<T>): Promise<T> {
         const result = this.operationLock.then(op, op);
         this.operationLock = result.then(() => undefined, () => undefined);
         return result;
     }
 
-    // ─── Register ─────────────────────────────────────────────────────────────
+    // ─── Register / connect ──────────────────────────────────────────────────
 
     async register(): Promise<SipRegisterResult> {
         return this.enqueue(() => this.doRegister());
     }
 
     private async doRegister(): Promise<SipRegisterResult> {
+        this.setupNetworkMonitoring();
         this.intentionalDisconnect = false;
+
+        if (this.connectionState === 'registered' && this.provider.refreshRegistration) {
+            await this.provider.refreshRegistration();
+            this.scheduleRegistrationExpiry();
+            return this.getRegisterResult();
+        }
+
         this.setConnectionState('connecting');
 
-        try { await this.provider.unregister(); } catch (_) { /* no active UA yet */ }
+        try {
+            if (this.connectionState !== 'disconnected') {
+                await this.provider.unregister();
+            }
+        } catch (_) { /* no active UA yet */ }
 
         const internalUserAgentDelegate: ISipUserAgentDelegate = {
             onConnect: (data) => {
@@ -216,13 +258,12 @@ export class SipClient {
                 this.setConnectionState('disconnected');
                 this.onUserAgent.onDisconnect?.(error);
                 this.emitter.emit('disconnect', error);
-                if (!this.intentionalDisconnect) {
+                if (!this.intentionalDisconnect && this.autoReconnect) {
                     this.onSipLog?.("warn", "sip.Client", "", "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
                     this.triggerReconnection();
                 }
             },
             onInvite: (invitation) => {
-                console.log(`[easy-sipjs][2] SipClient internalDelegate.onInvite fired — emitter listeners=${(this.emitter as any).listeners?.invite?.length ?? 0}`);
                 this.playRingtone();
 
                 const originalAccept = invitation.accept.bind(invitation);
@@ -240,13 +281,11 @@ export class SipClient {
                 const originalOnTerminate = invitation.onTerminate;
                 invitation.onTerminate = () => {
                     this.stopRingtone();
-                    if (originalOnTerminate) originalOnTerminate();
+                    originalOnTerminate?.();
                 };
 
                 this.onUserAgent.onInvite?.(invitation);
-                console.log('[easy-sipjs][2] emitter.emit("invite") firing…');
                 this.emitter.emit('invite', invitation);
-                console.log('[easy-sipjs][2] emitter.emit("invite") done');
             },
             onMessage: (msg) => {
                 this.onUserAgent.onMessage?.(msg);
@@ -256,9 +295,19 @@ export class SipClient {
                 this.onUserAgent.onNotify?.(n);
                 this.emitter.emit('notify', n);
             },
-            onRefer: (r) => this.onUserAgent.onRefer?.(r),
+            onRefer: (r) => {
+                this.onUserAgent.onRefer?.(r);
+                this.emitter.emit('refer', r);
+            },
             onRegister: (r) => this.onUserAgent.onRegister?.(r),
-            onSubscribe: (s) => this.onUserAgent.onSubscribe?.(s),
+            onSubscribe: (s) => {
+                this.onUserAgent.onSubscribe?.(s);
+                this.emitter.emit('subscribe', s);
+            },
+            onPresence: (presence) => {
+                this.onUserAgent.onPresence?.(presence);
+                this.emitter.emit('presence', presence);
+            },
         };
 
         const internalRegisterDelegate: ISipRegisterDelegate = {
@@ -290,6 +339,55 @@ export class SipClient {
             throw error;
         }
 
+        return this.getRegisterResult();
+    }
+
+    async refreshRegistration(): Promise<void> {
+        return this.enqueue(async () => {
+            if (this.provider.refreshRegistration) {
+                await this.provider.refreshRegistration();
+            } else {
+                await this.doRegister();
+                return;
+            }
+            this.setConnectionState('registered');
+            this.scheduleRegistrationExpiry();
+        });
+    }
+
+    async updateCredentials(credentials: SipCredentials): Promise<SipRegisterResult> {
+        return this.enqueue(async () => {
+            for (const session of this.sessions) {
+                try { await session.bye(); } catch (_) { }
+            }
+            this.sessions = [];
+            this.activeSessionId = undefined;
+            this.clearTimers();
+            try { await this.provider.unregister(); } catch (_) { }
+            this.credentials = credentials;
+            this.connectionState = 'disconnected';
+            return this.doRegister();
+        });
+    }
+
+    private scheduleRegistrationExpiry() {
+        if (this.registrationExpiryTimer) clearTimeout(this.registrationExpiryTimer);
+        const delay = Math.max(5, 3600 - this.registrationExpiringBuffer) * 1000;
+        this.registrationExpiryTimer = setTimeout(() => {
+            this.registrationExpiryTimer = undefined;
+            this.onRegister.onExpiring?.();
+            this.emitter.emit('registration-expiring');
+
+            if (this.autoRefreshRegistration && !this.intentionalDisconnect) {
+                this.refreshRegistration().catch(error => {
+                    this.onSipLog?.("error", "sip.Client", "", `Falha ao renovar registro SIP: ${error}`);
+                    if (this.autoReconnect) this.triggerReconnection();
+                });
+            }
+        }, delay);
+    }
+
+    private getRegisterResult(): SipRegisterResult {
         if (this.provider instanceof SipJSProvider) {
             return {
                 userAgent: this.provider.getUserAgent()!,
@@ -303,49 +401,48 @@ export class SipClient {
         };
     }
 
-    /**
-     * Applies new SIP credentials and reconnects, without tearing down event
-     * listeners or session bookkeeping the way a full unregister()/register()
-     * cycle would. Any in-flight calls are terminated first since they belong
-     * to the identity being replaced.
-     */
-    async updateCredentials(credentials: SipCredentials): Promise<SipRegisterResult> {
-        return this.enqueue(async () => {
-            for (const session of this.sessions) {
-                try { await session.bye(); } catch (_) { }
-            }
-            this.sessions = [];
-            this.activeSessionId = undefined;
+    // ─── Reconnect / health ──────────────────────────────────────────────────
 
-            this.intentionalDisconnect = true;
-            if (this.reconnectTimer) {
-                clearTimeout(this.reconnectTimer);
-                this.reconnectTimer = undefined;
-            }
-            if (this.registrationExpiryTimer) {
-                clearTimeout(this.registrationExpiryTimer);
-                this.registrationExpiryTimer = undefined;
-            }
+    async reconnect(): Promise<void> {
+        return this.enqueue(() => this.doReconnect());
+    }
+
+    private async doReconnect(): Promise<void> {
+        this.intentionalDisconnect = false;
+        this.setConnectionState('connecting');
+        if (this.provider.reconnect) {
+            await this.provider.reconnect();
+            this.setConnectionState('registered');
             this.reconnectAttempt = 0;
-
-            try { await this.provider.unregister(); } catch (_) { }
-
-            this.credentials = credentials;
-            return this.doRegister();
-        });
+            this.scheduleRegistrationExpiry();
+            return;
+        }
+        await this.provider.unregister().catch(() => {});
+        await this.doRegister();
     }
 
-    private scheduleRegistrationExpiry() {
-        if (this.registrationExpiryTimer) clearTimeout(this.registrationExpiryTimer);
-        const delay = (3600 - this.registrationExpiringBuffer) * 1000;
-        this.registrationExpiryTimer = setTimeout(() => {
-            this.registrationExpiryTimer = undefined;
-            this.onRegister.onExpiring?.();
-            this.emitter.emit('registration-expiring');
-        }, delay);
-    }
+    async checkHealth(): Promise<SipHealthStatus> {
+        const providerHealth = this.provider.getHealth?.() ?? {};
+        let pingResult: { ok: boolean; latencyMs?: number; error?: string } | undefined;
 
-    // ─── Reconnect with exponential backoff ───────────────────────────────────
+        if (this.provider.ping && this.connectionState !== 'disconnected') {
+            pingResult = await this.provider.ping();
+        }
+
+        const status: SipHealthStatus = {
+            websocketConnected: providerHealth.websocketConnected ?? (this.connectionState === 'connected' || this.connectionState === 'registered'),
+            registered: providerHealth.registered ?? this.connectionState === 'registered',
+            connectionState: this.connectionState,
+            activeSessions: this.sessions.length,
+            lastPingOkAt: pingResult?.ok ? new Date() : providerHealth.lastPingOkAt,
+            lastPingLatencyMs: pingResult?.latencyMs ?? providerHealth.lastPingLatencyMs,
+            lastPingError: pingResult?.ok ? undefined : pingResult?.error ?? providerHealth.lastPingError,
+            checkedAt: new Date(),
+        };
+
+        this.emitter.emit('health', status);
+        return status;
+    }
 
     private getReconnectDelay(attempt: number): number {
         return Math.min(
@@ -355,7 +452,7 @@ export class SipClient {
     }
 
     private triggerReconnection() {
-        if (this.reconnectTimer) return;
+        if (this.reconnectTimer || !this.autoReconnect) return;
         if (this.reconnectAttempt >= this.maxReconnectAttempts) {
             this.onSipLog?.("error", "sip.Client", "", `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`);
             return;
@@ -368,7 +465,7 @@ export class SipClient {
             this.reconnectAttempt = nextAttempt;
             this.onSipLog?.("info", "sip.Client", "", `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
             try {
-                await this.register();
+                await this.reconnect();
             } catch (error) {
                 this.onSipLog?.("error", "sip.Client", "", `Falha na tentativa de reconexão: ${error}`);
                 this.triggerReconnection();
@@ -376,11 +473,29 @@ export class SipClient {
         }, delay);
     }
 
-    // ─── Sounds ───────────────────────────────────────────────────────────────
+    // ─── Presence / BLF ──────────────────────────────────────────────────────
+
+    async subscribePresence(target: string, options?: PresenceSubscribeOptions): Promise<void> {
+        if (!this.provider.subscribePresence) {
+            throw new Error("Presence subscription is not supported by the selected SIP provider.");
+        }
+        await this.provider.subscribePresence(target, options);
+    }
+
+    async unsubscribePresence(target: string): Promise<void> {
+        if (!this.provider.unsubscribePresence) return;
+        await this.provider.unsubscribePresence(target);
+    }
+
+    onPresence(listener: (presence: PresenceEvent) => void): this {
+        return this.on('presence', listener);
+    }
+
+    // ─── Sounds ──────────────────────────────────────────────────────────────
 
     private playRingtone() {
         if (typeof window === 'undefined') return;
-        if (this.options?.sounds?.ringtone) {
+        if (this.options.sounds?.ringtone) {
             try {
                 if (!this.ringtoneAudio) {
                     this.ringtoneAudio = new Audio(this.options.sounds.ringtone);
@@ -405,7 +520,7 @@ export class SipClient {
 
     private playRingback() {
         if (typeof window === 'undefined') return;
-        if (this.options?.sounds?.ringback) {
+        if (this.options.sounds?.ringback) {
             try {
                 if (!this.ringbackAudio) {
                     this.ringbackAudio = new Audio(this.options.sounds.ringback);
@@ -433,21 +548,32 @@ export class SipClient {
         this.stopRingback();
     }
 
-    // ─── Session tracking ─────────────────────────────────────────────────────
+    // ─── Session tracking ────────────────────────────────────────────────────
 
     private trackSession(session: ISipSession) {
         this.sessions.push(session);
+        this.activeSessionId = session.id;
+        this.emitter.emit('session', session);
 
-        // Use a closure + defineProperty so that user code can set session.onTerminate
-        // after this point without clobbering the internal cleanup (session removal,
-        // activeSessionId reset). The setter keeps the user's fn; the internal cleanup
-        // always runs first and then delegates to it.
-        let userOnTerminate = session.onTerminate;
-        const internalCleanup = () => {
+        const removeSession = () => {
             this.sessions = this.sessions.filter(s => s.id !== session.id);
             if (this.activeSessionId === session.id) {
-                this.activeSessionId = undefined;
+                this.activeSessionId = this.sessions[this.sessions.length - 1]?.id;
             }
+        };
+
+        session.on?.('state', state => this.emitter.emit('session-state', session, state));
+        session.on?.('progress', event => this.emitter.emit('session-progress', session, event));
+        session.on?.('established', () => this.emitter.emit('session-established', session));
+        session.on?.('failed', event => this.emitter.emit('session-failed', session, event));
+        session.on?.('terminated', event => {
+            removeSession();
+            this.emitter.emit('session-terminated', session, event);
+        });
+
+        let userOnTerminate = session.onTerminate;
+        const internalCleanup = () => {
+            removeSession();
             userOnTerminate?.();
         };
         Object.defineProperty(session, 'onTerminate', {
@@ -458,17 +584,23 @@ export class SipClient {
         });
     }
 
-    // ─── Call control ─────────────────────────────────────────────────────────
+    // ─── Call control ────────────────────────────────────────────────────────
 
     async call(options: CallOptions): Promise<ISipSession> {
         this.playRingback();
         try {
             const session = await this.provider.call(options);
+            session.on?.('progress', event => {
+                if (event?.hasEarlyMedia || event?.statusCode === 183) this.stopRingback();
+            });
+            session.on?.('established', () => this.stopRingback());
+            session.on?.('failed', () => this.stopRingback());
+            session.on?.('terminated', () => this.stopRingback());
 
             const originalOnTerminate = session.onTerminate;
             session.onTerminate = () => {
                 this.stopRingback();
-                if (originalOnTerminate) originalOnTerminate();
+                originalOnTerminate?.();
             };
 
             session.onConfirm = () => {
@@ -502,10 +634,6 @@ export class SipClient {
         await this.activeSession?.transfer(target);
     }
 
-    /**
-     * Attended transfer: places `firstSession` on hold, then transfers it
-     * to replace `secondSession`, and terminates `secondSession`.
-     */
     async attendedTransfer(firstSession: ISipSession, secondSession: ISipSession): Promise<void> {
         await firstSession.hold();
         await firstSession.transfer(secondSession);
@@ -524,8 +652,8 @@ export class SipClient {
         this.activeSession?.setRemoteVolume(volume);
     }
 
-    async sendDTMF(tone: string): Promise<void> {
-        await this.activeSession?.sendDTMF(tone);
+    async sendDTMF(tone: string, options?: DtmfOptions): Promise<void> {
+        await this.activeSession?.sendDTMF(tone, options);
     }
 
     async hangup(): Promise<void> {
@@ -537,7 +665,7 @@ export class SipClient {
         await this.provider.sendMessage(destination, body);
     }
 
-    // ─── Unregister / cleanup ─────────────────────────────────────────────────
+    // ─── Unregister / cleanup ────────────────────────────────────────────────
 
     async unregister(): Promise<void> {
         return this.enqueue(() => this.doUnregister());
@@ -545,15 +673,7 @@ export class SipClient {
 
     private async doUnregister(): Promise<void> {
         this.intentionalDisconnect = true;
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = undefined;
-        }
-        if (this.registrationExpiryTimer) {
-            clearTimeout(this.registrationExpiryTimer);
-            this.registrationExpiryTimer = undefined;
-        }
-        this.reconnectAttempt = 0;
+        this.clearTimers();
         this.stopAllSounds();
         this.cleanupNetworkMonitoring();
 
@@ -565,6 +685,18 @@ export class SipClient {
         this.sessions = [];
         this.activeSessionId = undefined;
         this.setConnectionState('disconnected');
+    }
+
+    private clearTimers(): void {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
+        if (this.registrationExpiryTimer) {
+            clearTimeout(this.registrationExpiryTimer);
+            this.registrationExpiryTimer = undefined;
+        }
+        this.reconnectAttempt = 0;
     }
 }
 

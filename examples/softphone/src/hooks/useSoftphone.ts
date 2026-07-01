@@ -172,7 +172,9 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
 
   useEffect(() => {
     client.onConnectionStateChange = setConnectionState;
-    client.onRegister.onExpiring = () => { client.register().catch(() => {}); };
+    client.onRegister.onExpiring = () => {
+      // easy-sipjs now refreshes REGISTER automatically by default.
+    };
 
     client.onSipLog = (_level, _category, _label, content) => {
       // SIP.js 0.21.x format: "Sending WebSocket message:\n\n<SIP>" / "Received WebSocket text message:\n\n<SIP>"
@@ -245,7 +247,7 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     client.on("invite", handleInvite);
     client.on("message", handleMessage);
 
-    client.register().catch(err => console.error("[softphone] registration failed:", err));
+    client.connect().catch(err => console.error("[softphone] registration failed:", err));
 
     return () => {
       client.off("invite", handleInvite);
