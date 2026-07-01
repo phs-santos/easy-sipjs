@@ -35,11 +35,11 @@ const emit = defineEmits<{
         <span>Conta SIP</span>
         <User class="text-sp-blue" :size="16" />
       </div>
-      <div class="mt-3 text-sm grid grid-cols-[5rem_1fr] gap-y-1">
+      <div class="mt-3 text-sm grid grid-cols-[5rem_minmax(0,1fr)] gap-y-1">
         <span class="text-sp-muted">Ramal</span>
-        <strong class="truncate">{{ credentials.phone }}</strong>
+        <strong class="truncate min-w-0">{{ credentials.phone }}</strong>
         <span class="text-sp-muted">Domínio</span>
-        <strong class="truncate">{{ credentials.domain }}</strong>
+        <strong class="truncate min-w-0">{{ credentials.domain }}</strong>
       </div>
     </div>
 

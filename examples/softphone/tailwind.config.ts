@@ -35,6 +35,7 @@ export default {
       animation: {
         ring: "ring 1.2s ease-in-out infinite",
         "fade-in": "fadeIn 0.22s ease-out",
+        "slide-left": "slideLeft 0.22s ease-out",
         pulseSoft: "pulseSoft 1.8s ease-in-out infinite",
       },
       keyframes: {
@@ -45,6 +46,10 @@ export default {
         fadeIn: {
           "0%":   { opacity: "0", transform: "translateY(8px) translateX(-50%)" },
           "100%": { opacity: "1", transform: "translateY(0) translateX(-50%)" },
+        },
+        slideLeft: {
+          "0%":   { opacity: "0", transform: "translateX(24px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
         },
         pulseSoft: {
           "0%, 100%": { opacity: ".65", transform: "scale(1)" },
