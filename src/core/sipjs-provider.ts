@@ -1,9 +1,18 @@
-import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session, Invitation, Messager } from "sip.js";
-import { OutgoingRequestDelegate } from "sip.js/lib/core";
-import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
-import { SipCredentials, CallOptions, SipInvitation, AnswerOptions, CallStats } from "./types";
-import { handleStateChanges } from "./media";
-import { ensureSipPrefix, parseRTCStats } from "./utils";
+import { UserAgent, Registerer, RegistererRegisterOptions, UserAgentDelegate, Inviter, Session, Invitation, Messager, Web } from "sip.js";
+
+// sip.js/lib/core is a deep subpath not exported via the package's exports map,
+// so we declare the minimal shape we need rather than importing it directly.
+interface OutgoingRequestDelegate {
+    onAccept?: (response: any) => void;
+    onProgress?: (response: any) => void;
+    onRedirect?: (response: any) => void;
+    onReject?: (response: any) => void;
+    onTrying?: (response: any) => void;
+}
+import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
+import { SipCredentials, CallOptions, SipInvitation, AnswerOptions, CallStats } from "./types.js";
+import { handleStateChanges } from "./media.js";
+import { ensureSipPrefix, parseRTCStats } from "./utils.js";
 
 
 export class SipJSSession implements ISipSession {
@@ -19,8 +28,10 @@ export class SipJSSession implements ISipSession {
 
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
+    private screenTrack?: MediaStreamTrack;
     private audioCtx?: AudioContext;
     private gainNode?: GainNode;
+    private _muted = false;
 
     constructor(private session: Session) {
         this.id = session.id;
@@ -71,27 +82,72 @@ export class SipJSSession implements ISipSession {
         }
     }
 
-    mute(): void { this.toggleAudioTracks(false); }
-    unmute(): void { this.toggleAudioTracks(true); }
+    mute(): void { this._muted = true; this.toggleAudioTracks(false); }
+    unmute(): void { this._muted = false; this.toggleAudioTracks(true); }
     muteVideo(): void { this.toggleVideoTracks(false); }
     unmuteVideo(): void { this.toggleVideoTracks(true); }
 
+    private reinviteInProgress = false;
+
+    // Asterisk (Pxtalk) mirrors the direction attribute in re-INVITE answers
+    // instead of complementing it (RFC 3264 §6.1).  This means:
+    //   offer sendonly  → answer sendonly  (wrong, should be recvonly)  → "Incompatible receive direction"
+    //   offer recvonly  → answer recvonly  (wrong, should be sendonly)  → "Incompatible send direction"
+    //   offer inactive  → answer inactive  (mirrors correctly, both agree nobody sends)
+    // Using `inactive` is the only direction value Asterisk mirrors that is
+    // self-consistent and that WebRTC accepts.  Hold music still plays from the
+    // PBX's MOH source regardless of the direction negotiated here.
+    private static holdSdpModifier = (desc: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> => {
+        if (!desc.sdp || desc.type !== 'offer') return Promise.resolve(desc);
+        const sdp = desc.sdp
+            .replace(/a=sendrecv\r\n/g, 'a=inactive\r\n')
+            .replace(/a=sendonly\r\n/g, 'a=inactive\r\n')
+            .replace(/a=recvonly\r\n/g, 'a=inactive\r\n');
+        return Promise.resolve({ ...desc, sdp });
+    };
+
     async hold(): Promise<void> {
-        await this.session.invite({ sessionDescriptionHandlerOptions: { hold: true } } as any);
-        this.toggleAudioTracks(false);
-        this.onHold?.();
+        if (this.reinviteInProgress) return;
+        this.reinviteInProgress = true;
+        try {
+            await (this.session as any).invite({
+                sessionDescriptionHandlerModifiers: [SipJSSession.holdSdpModifier],
+            });
+            this.toggleAudioTracks(false);
+            this.onHold?.();
+        } finally {
+            this.reinviteInProgress = false;
+        }
     }
 
     async unhold(): Promise<void> {
-        await this.session.invite({ sessionDescriptionHandlerOptions: { hold: false } } as any);
-        this.toggleAudioTracks(true);
-        this.onUnhold?.();
+        if (this.reinviteInProgress) return;
+        this.reinviteInProgress = true;
+        try {
+            await (this.session as any).invite({
+                sessionDescriptionHandlerModifiers: [],
+            });
+            // Restore pre-hold mute state — don't re-enable tracks if the user
+            // had muted before putting the call on hold.
+            if (!this._muted) this.toggleAudioTracks(true);
+            this.onUnhold?.();
+        } finally {
+            this.reinviteInProgress = false;
+        }
     }
 
     async transfer(target: string | ISipSession): Promise<void> {
         if (typeof target === "string") {
-            const uri = UserAgent.makeURI(target);
-            if (!uri) throw new Error("Invalid transfer target URI");
+            // Accept bare extensions ("5001"), "sip:5001", or full URIs.
+            // Fall back to the remote party's domain so the proxy routes correctly.
+            let raw = target.trim();
+            if (!raw.startsWith("sip:") && !raw.startsWith("sips:")) raw = `sip:${raw}`;
+            if (!raw.includes("@")) {
+                const domain = this.session.remoteIdentity?.uri?.host ?? "";
+                raw = `${raw}@${domain}`;
+            }
+            const uri = UserAgent.makeURI(raw);
+            if (!uri) throw new Error(`Invalid transfer target URI: ${raw}`);
             await this.session.refer(uri);
         } else {
             const otherSession = (target as SipJSSession).session;
@@ -110,22 +166,34 @@ export class SipJSSession implements ISipSession {
     async setAudioInput(deviceId: string): Promise<void> {
         const pc = this.getPeerConnection();
         if (!pc) return;
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
-        const newTrack = stream.getAudioTracks()[0];
         const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (sender) await sender.replaceTrack(newTrack);
+        if (!sender) return;
+        const previousTrack = sender.track;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+        const [newTrack] = stream.getAudioTracks();
+        if (!newTrack) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); return; }
+        await sender.replaceTrack(newTrack);
+        previousTrack?.stop();
     }
 
     setRemoteVolume(volume: number): void {
         if (!this.remoteElement) return;
         if (!this.audioCtx) {
             const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-            if (!AudioCtx) return;
+            if (!AudioCtx) {
+                // Fallback: just set the element volume directly (0–1 range only)
+                this.remoteElement.volume = Math.min(1, Math.max(0, volume));
+                return;
+            }
             this.audioCtx = new AudioCtx();
             const source = this.audioCtx.createMediaElementSource(this.remoteElement);
             this.gainNode = this.audioCtx.createGain();
             source.connect(this.gainNode);
             this.gainNode.connect(this.audioCtx.destination);
+        }
+        // Resume the context — browsers suspend it until a user-gesture triggers audio
+        if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
         }
         if (this.gainNode) {
             this.gainNode.gain.value = Math.max(0, volume);
@@ -148,14 +216,15 @@ export class SipJSSession implements ISipSession {
     async shareScreen(): Promise<void> {
         const pc = this.getPeerConnection();
         if (!pc) throw new Error("No active peer connection");
-        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
-        const screenTrack = stream.getVideoTracks()[0];
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) {
-            this.originalVideoTrack = sender.track ?? undefined;
-            await sender.replaceTrack(screenTrack);
-            screenTrack.onended = () => this.stopScreenSharing();
-        }
+        if (!sender) throw new Error("No video sender available for screen sharing");
+        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
+        const [track] = stream.getVideoTracks();
+        if (!track) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); throw new Error("No screen video track available"); }
+        this.originalVideoTrack = sender.track ?? undefined;
+        this.screenTrack = track;
+        await sender.replaceTrack(track);
+        track.onended = () => { this.stopScreenSharing().catch(() => {}); };
     }
 
     async stopScreenSharing(): Promise<void> {
@@ -164,8 +233,10 @@ export class SipJSSession implements ISipSession {
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (sender && this.originalVideoTrack) {
             await sender.replaceTrack(this.originalVideoTrack);
-            this.originalVideoTrack = undefined;
         }
+        this.screenTrack?.stop();
+        this.screenTrack = undefined;
+        this.originalVideoTrack = undefined;
     }
 
     async getStats(): Promise<CallStats> {
@@ -224,6 +295,7 @@ export class SipJSProvider implements ISipProvider {
             userAgentString = "sipjs-simple",
             iceServers,
             debug = false,
+            authorizationUsername,
         } = credentials;
 
         this.domain = domain;
@@ -235,20 +307,27 @@ export class SipJSProvider implements ISipProvider {
             onConnect: onUserAgent.onConnect,
             onDisconnect: onUserAgent.onDisconnect,
             onInvite: (invitation: Invitation) => {
+                console.log(`[easy-sipjs][1] SipJSProvider.onInvite fired — state=${invitation.state} from=${invitation.remoteIdentity?.uri?.toString()}`);
                 if (onUserAgent.onInvite) {
                     const sipInvitation = this.mapToInvitation(invitation);
 
                     // Send 180 Ringing immediately so the calling side knows the phone is alerting.
                     // Without this, the INVITE may be CANCELed by the far end before the app answers.
-                    invitation.progress().catch(() => {});
+                    invitation.progress().catch((e) => {
+                        console.warn('[easy-sipjs][1] progress() rejected:', e);
+                    });
 
                     invitation.stateChange.addListener((state) => {
+                        console.log(`[easy-sipjs][1] invitation.stateChange → ${state}`);
                         if (state === "Terminated" && sipInvitation.onTerminate) {
                             sipInvitation.onTerminate();
                         }
                     });
 
+                    console.log('[easy-sipjs][1] calling onUserAgent.onInvite(sipInvitation)');
                     onUserAgent.onInvite(sipInvitation);
+                } else {
+                    console.warn('[easy-sipjs][1] onUserAgent.onInvite is NOT set — invite dropped here');
                 }
             },
             onMessage: onUserAgent.onMessage,
@@ -260,23 +339,61 @@ export class SipJSProvider implements ISipProvider {
 
         this.userAgent = new UserAgent({
             displayName: nameexten ?? phone,
-            authorizationUsername: phone,
+            authorizationUsername: authorizationUsername ?? phone,
             authorizationPassword: secret,
             uri,
-            transportOptions: { server, traceSip: true },
+            // Use the phone number as the Contact user part and the SIP domain as
+            // the host so the registered contact becomes sip:<phone>@<domain> instead
+            // of the SIP.js default sip:<random>@<random>.invalid.  Pxtalk (Kamailio)
+            // preserves the domain in the x-ast-orig-host parameter it passes to
+            // Asterisk, which is then used to route incoming INVITEs back through the
+            // correct WebSocket connection.
+            contactName: phone,
+            viaHost: domain,
+            transportOptions: { server, traceSip: debug },
             userAgentString,
             contactParams: { transport: "wss" },
             delegate: userAgentDelegate,
-            logLevel: "log",
-            logConnector: (level: string, category: string, label: string | undefined, content: string) => {
-                onSipLog?.(level, category, label || "", content);
-            },
+            logLevel: debug ? "log" : "error",
+            logConnector: debug
+                ? (level: string, category: string, label: string | undefined, content: string) => {
+                    onSipLog?.(level, category, label || "", content);
+                }
+                : undefined,
             sessionDescriptionHandlerFactoryOptions: iceServers ? {
                 peerConnectionConfiguration: { iceServers }
             } : undefined
         });
 
+        // Publish the real SIP URI as the Contact so the proxy can route
+        // incoming INVITEs back to this WebSocket connection.
+        this.userAgent.contact.pubGruu = uri;
+        this.userAgent.contact.tempGruu = uri;
+
         await this.userAgent.start();
+
+        // Pxtalk 16 (and some other proxies) send SIP responses where the
+        // Content-Length header is larger than the actual body (they modify ICE
+        // lines in transit without recalculating the length).  SIP.js drops any
+        // message whose body is shorter than Content-Length, leaving re-INVITEs
+        // (hold/unhold) permanently pending.  Patch the transport right after
+        // start() so every incoming message has its Content-Length corrected
+        // before SIP.js parses it.
+        const transport = (this.userAgent as any).transport;
+        if (transport && typeof transport.onMessage === 'function') {
+            const origOnMessage = transport.onMessage.bind(transport);
+            transport.onMessage = (raw: string) => {
+                const sep = raw.indexOf('\r\n\r\n');
+                if (sep !== -1) {
+                    const body = raw.slice(sep + 4);
+                    const actualBodyLen = new TextEncoder().encode(body).length;
+                    const patched = raw.replace(/Content-Length:\s*\d+\r\n/i, `Content-Length: ${actualBodyLen}\r\n`);
+                    origOnMessage(patched);
+                } else {
+                    origOnMessage(raw);
+                }
+            };
+        }
 
         this.registerer = new Registerer(this.userAgent, { expires: 3600 });
 

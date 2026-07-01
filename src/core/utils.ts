@@ -1,4 +1,4 @@
-import { CallStats } from "./types";
+import { CallStats } from "./types.js";
 
 export function ensureSipPrefix(uri: string): string {
     if (!uri) return uri;

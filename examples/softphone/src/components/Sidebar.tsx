@@ -1,4 +1,4 @@
-import { Phone, Clock, MessageSquare, Settings, LogOut } from "lucide-react";
+import { Phone, Clock, MessageSquare, Settings, LogOut, Activity } from "lucide-react";
 import type { SipConnectionState } from "easy-sipjs";
 import type { ActiveView } from "../types";
 
@@ -8,6 +8,7 @@ interface Props {
   connectionState: SipConnectionState;
   unreadMessages: number;
   phone: string;
+  nameexten?: string;
   onLogout: () => void;
 }
 
@@ -31,10 +32,11 @@ const NAV: { view: ActiveView; icon: React.ReactNode; label: string }[] = [
   { view: "dialer",   icon: <Phone size={16} />,         label: "Discador"  },
   { view: "history",  icon: <Clock size={16} />,         label: "Histórico" },
   { view: "messages", icon: <MessageSquare size={16} />, label: "Mensagens" },
+  { view: "monitor",  icon: <Activity size={16} />,      label: "Monitor"   },
   { view: "settings", icon: <Settings size={16} />,      label: "Ajustes"   },
 ];
 
-export function Sidebar({ activeView, onChangeView, connectionState, unreadMessages, phone, onLogout }: Props) {
+export function Sidebar({ activeView, onChangeView, connectionState, unreadMessages, phone, nameexten, onLogout }: Props) {
   return (
     <aside className="w-56 bg-sp-surface border-r border-sp-border flex flex-col">
       <div className="p-4 border-b border-sp-border">
@@ -46,7 +48,7 @@ export function Sidebar({ activeView, onChangeView, connectionState, unreadMessa
           <span className={`w-2 h-2 rounded-full ${STATE_COLOR[connectionState]}`} />
           <span className="text-sp-muted">{STATE_LABEL[connectionState]}</span>
         </div>
-        <div className="text-sp-muted text-xs mt-1 truncate">Ramal {phone}</div>
+        <div className="text-sp-text text-sm font-medium mt-1 truncate">{nameexten || phone}</div>
       </div>
 
       <nav className="flex-1 p-2 space-y-1">

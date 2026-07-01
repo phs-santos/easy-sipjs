@@ -213,8 +213,10 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     };
 
     const handleInvite = (inv: SipInvitation) => {
+      console.log(`[easy-sipjs][3] useSoftphone.handleInvite fired — from=${inv.remoteIdentity?.uri?.user}`);
       const number = inv.remoteIdentity.uri.user;
       const name = inv.remoteIdentity.displayName || undefined;
+      console.log('[easy-sipjs][3] calling setInvitation + setCallerInfo');
       setInvitation(inv);
       setCallerInfo({ number, name });
 
@@ -279,13 +281,17 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     if (!invitation) return;
     const number = invitation.remoteIdentity.uri.user;
     const name = invitation.remoteIdentity.displayName || undefined;
+    // Put the currently active call on hold before answering
+    if (activeSessionState && !activeSessionState.isOnHold) {
+      await activeSessionState.session.hold().catch(() => {});
+    }
     const session = await client.answer(invitation, {
       remoteElement: remoteAudio.current,
     });
     wireSession(session, "inbound", number, name);
     setInvitation(undefined);
     setCallerInfo(undefined);
-  }, [client, invitation, wireSession]);
+  }, [client, invitation, wireSession, activeSessionState]);
 
   const rejectIncoming = useCallback(async () => {
     if (!invitation) return;
@@ -414,6 +420,22 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     setActiveSessionId(id);
   }, []);
 
+  const switchSession = useCallback(async (targetId: string) => {
+    if (targetId === activeSessionId) return;
+    const current = activeSessionState;
+    const target = sessionStates.find(s => s.session.id === targetId);
+    if (!target) return;
+    // Hold current if active and not already on hold
+    if (current && !current.isOnHold) {
+      await current.session.hold().catch(() => {});
+    }
+    // Unhold target if it was on hold
+    if (target.isOnHold) {
+      await target.session.unhold().catch(() => {});
+    }
+    setActiveSessionId(targetId);
+  }, [activeSessionId, activeSessionState, sessionStates]);
+
   const updateCredentials = useCallback(
     async (newCredentials: StoredCredentials) => {
       await client.updateCredentials(newCredentials);
@@ -451,6 +473,7 @@ export function useSoftphone(credentials: StoredCredentials, devicePrefs: Device
     clearHistory,
     clearMessages,
     selectSession,
+    switchSession,
     updateCredentials,
   };
 }

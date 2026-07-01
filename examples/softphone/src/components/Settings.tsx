@@ -69,9 +69,13 @@ export function Settings({ credentials, devicePrefs, onSaveDevicePrefs, onUpdate
           <input className="sp-input" value={credForm.domain}
             onChange={e => setCred("domain", e.target.value)} placeholder="pbx.example.com" />
         </Field>
-        <Field label="Ramal / Usuário">
+        <Field label="Ramal / Usuário (Telefone)">
           <input className="sp-input" value={credForm.phone}
             onChange={e => setCred("phone", e.target.value)} placeholder="1001" />
+        </Field>
+        <Field label="Usuário de autenticação" hint="Deixe em branco se igual ao ramal. Use quando o login SIP difere do número (ex: PJSIP Asterisk).">
+          <input className="sp-input" value={credForm.authorizationUsername || ""}
+            onChange={e => setCred("authorizationUsername", e.target.value || undefined)} placeholder="Igual ao ramal (opcional)" />
         </Field>
         <Field label="Nome de exibição">
           <input className="sp-input" value={credForm.nameexten || ""}
@@ -185,11 +189,12 @@ function Section({ title, icon, children }: { title: string; icon?: React.ReactN
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
       <label className="block text-xs text-sp-muted mb-1">{label}</label>
       {children}
+      {hint && <p className="text-xs text-sp-muted/70 mt-1">{hint}</p>}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { ActiveCall } from "./components/ActiveCall";
 import { History } from "./components/History";
 import { Messages } from "./components/Messages";
 import { Settings } from "./components/Settings";
+import { Monitor } from "./components/Monitor";
 import type { ActiveView, DevicePrefs, StoredCredentials } from "./types";
 
 export default function App() {
@@ -71,24 +72,52 @@ function Softphone({
         connectionState={sp.connectionState}
         unreadMessages={sp.unreadMessages}
         phone={credentials.phone}
+        nameexten={credentials.nameexten}
         onLogout={handleLogout}
       />
 
       <main className="flex-1 overflow-y-auto p-6">
         {sp.activeSessionState ? (
-          <ActiveCall
-            sessionState={sp.activeSessionState}
-            callRecord={sp.callHistory.find(r => r.id === sp.activeSessionState?.callRecordId)}
-            sipLogs={sp.sipLogs}
-            onHangup={sp.hangup}
-            onToggleMute={sp.toggleMute}
-            onToggleHold={sp.toggleHold}
-            onSendDTMF={sp.sendDTMFTone}
-            onTransfer={sp.doTransfer}
-            onToggleScreenShare={sp.toggleScreenShare}
-            onSetVolume={sp.setVolume}
-            onFetchStats={sp.fetchStats}
-          />
+          <>
+            {sp.sessionStates.length > 1 && (
+              <div className="flex gap-2 mb-4 flex-wrap">
+                {sp.sessionStates.map(ss => {
+                  const rec = sp.callHistory.find(r => r.id === ss.callRecordId);
+                  const isActive = ss.session.id === sp.activeSessionState?.session.id;
+                  return (
+                    <button
+                      key={ss.session.id}
+                      onClick={() => sp.switchSession(ss.session.id)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm border transition-colors ${
+                        isActive
+                          ? "bg-sp-surface border-sp-accent text-sp-text"
+                          : "bg-sp-bg border-sp-border text-sp-muted hover:border-sp-accent/50"
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${ss.isOnHold ? "bg-sp-amber" : "bg-sp-green"}`} />
+                      <span className="font-medium">{rec?.number ?? "—"}</span>
+                      {ss.isOnHold && <span className="text-sp-amber text-xs">Em espera</span>}
+                      {isActive && !ss.isOnHold && <span className="text-sp-green text-xs">Ativa</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <ActiveCall
+              sessionState={sp.activeSessionState}
+              callRecord={sp.callHistory.find(r => r.id === sp.activeSessionState?.callRecordId)}
+              sipLogs={sp.sipLogs}
+              onHangup={sp.hangup}
+              onToggleMute={sp.toggleMute}
+              onToggleHold={sp.toggleHold}
+              onSendDTMF={sp.sendDTMFTone}
+              onTransfer={sp.doTransfer}
+              onToggleScreenShare={sp.toggleScreenShare}
+              onSetVolume={sp.setVolume}
+              onFetchStats={sp.fetchStats}
+              onNewCall={sp.activeSessionState.isOnHold ? sp.dial : undefined}
+            />
+          </>
         ) : (
           <>
             {activeView === "dialer" && (
@@ -112,6 +141,16 @@ function Softphone({
                 onSaveDevicePrefs={onSaveDevicePrefs}
                 onUpdateCredentials={handleUpdateCredentials}
                 onLogout={handleLogout}
+              />
+            )}
+            {activeView === "monitor" && (
+              <Monitor
+                connectionState={sp.connectionState}
+                credentials={credentials}
+                sipLogs={sp.sipLogs}
+                sessionStates={sp.sessionStates}
+                callHistoryCount={sp.callHistory.length}
+                onReconnect={() => sp.client.register().catch(() => {})}
               />
             )}
           </>

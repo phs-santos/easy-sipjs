@@ -73,6 +73,12 @@ export function Login({ onConnect }: Props) {
               </Field>
             </div>
 
+            <Field label="Usuário de auth (opcional)">
+              <input className="sp-input" value={form.authorizationUsername || ""}
+                onChange={e => set("authorizationUsername", e.target.value || undefined)}
+                placeholder="Igual ao ramal (PJSIP: use o nome do endpoint)" />
+            </Field>
+
             <Field label="Nome de exibição (opcional)">
               <input className="sp-input" value={form.nameexten}
                 onChange={e => set("nameexten", e.target.value)} placeholder="João Silva" />

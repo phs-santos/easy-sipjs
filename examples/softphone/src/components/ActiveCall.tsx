@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Mic, MicOff, Pause, Play, Hash, Monitor, ArrowRightLeft,
-  BarChart2, PhoneOff, Volume2, VolumeX, Phone, Terminal, ChevronDown, ChevronRight,
+  BarChart2, PhoneOff, Volume2, VolumeX, Phone, Terminal, ChevronDown, ChevronRight, PhoneCall,
 } from "lucide-react";
 import type { CallStats } from "easy-sipjs";
 import type { SessionState } from "../hooks/useSoftphone";
@@ -19,6 +19,7 @@ interface Props {
   onToggleScreenShare: () => void;
   onSetVolume: (v: number) => void;
   onFetchStats: () => Promise<CallStats | undefined>;
+  onNewCall?: (destination: string) => void;
 }
 
 const DTMF_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -27,13 +28,16 @@ export function ActiveCall({
   sessionState, callRecord, sipLogs,
   onHangup, onToggleMute, onToggleHold,
   onSendDTMF, onTransfer, onToggleScreenShare, onSetVolume, onFetchStats,
+  onNewCall,
 }: Props) {
   const [duration, setDuration] = useState(0);
   const [showDTMF, setShowDTMF] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showNewCall, setShowNewCall] = useState(false);
   const [showStats, setShowStats] = useState(true);
   const [showTrace, setShowTrace] = useState(true);
   const [transferTarget, setTransferTarget] = useState("");
+  const [newCallTarget, setNewCallTarget] = useState("");
   const [volume, setVolumeState] = useState(1);
   const [stats, setStats] = useState<CallStats | undefined>();
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
@@ -60,6 +64,13 @@ export function ActiveCall({
     onTransfer(transferTarget.trim());
     setTransferTarget("");
     setShowTransfer(false);
+  };
+
+  const handleNewCall = () => {
+    if (!newCallTarget.trim() || !onNewCall) return;
+    onNewCall(newCallTarget.trim());
+    setNewCallTarget("");
+    setShowNewCall(false);
   };
 
   return (
@@ -89,6 +100,10 @@ export function ActiveCall({
             icon={<Monitor size={18} />} label="Tela" />
           <ControlButton active={showTransfer} onClick={() => setShowTransfer(v => !v)}
             icon={<ArrowRightLeft size={18} />} label="Transfer" />
+          {onNewCall && (
+            <ControlButton active={showNewCall} onClick={() => setShowNewCall(v => !v)}
+              icon={<PhoneCall size={18} />} label="Nova" />
+          )}
           <ControlButton active={showStats} onClick={() => setShowStats(v => !v)}
             icon={<BarChart2 size={18} />} label="Stats" />
           <ControlButton active={showTrace} onClick={() => setShowTrace(v => !v)}
@@ -124,6 +139,18 @@ export function ActiveCall({
             <button onClick={handleTransfer}
               className="px-3 rounded-lg bg-sp-blue text-white text-sm font-medium">
               <ArrowRightLeft size={14} />
+            </button>
+          </div>
+        )}
+
+        {showNewCall && onNewCall && (
+          <div className="flex gap-2 mt-5">
+            <input className="sp-input" placeholder="Número para nova chamada"
+              value={newCallTarget} onChange={e => setNewCallTarget(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleNewCall()} autoFocus />
+            <button onClick={handleNewCall}
+              className="px-3 rounded-lg bg-sp-green text-black text-sm font-medium">
+              <Phone size={14} />
             </button>
           </div>
         )}

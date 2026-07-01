@@ -8,6 +8,7 @@ interface Props {
 }
 
 export function IncomingCall({ callerInfo, onAnswer, onReject }: Props) {
+  console.log(`[easy-sipjs][4] IncomingCall RENDERED — from=${callerInfo.number}`);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-sp-surface border border-sp-border rounded-2xl p-8 w-80 text-center shadow-2xl">

@@ -1,4 +1,4 @@
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types.js";
 
 export interface ISipProvider {
     register(

@@ -1,8 +1,8 @@
 import JsSIP from "jssip";
-import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types";
-import { assignStream } from "./media";
-import { ensureSipPrefix, parseRTCStats } from "./utils";
+import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats } from "./types.js";
+import { assignStream } from "./media.js";
+import { ensureSipPrefix, parseRTCStats } from "./utils.js";
 
 export class JsSIPSession implements ISipSession {
     public readonly id: string;
@@ -17,6 +17,7 @@ export class JsSIPSession implements ISipSession {
 
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
+    private screenTrack?: MediaStreamTrack;
     private audioCtx?: AudioContext;
     private gainNode?: GainNode;
 
@@ -115,10 +116,14 @@ export class JsSIPSession implements ISipSession {
     async setAudioInput(deviceId: string): Promise<void> {
         const pc = this.session.connection as RTCPeerConnection | undefined;
         if (!pc) return;
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
-        const newTrack = stream.getAudioTracks()[0];
         const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (sender) await sender.replaceTrack(newTrack);
+        if (!sender) return;
+        const previousTrack = sender.track;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+        const [newTrack] = stream.getAudioTracks();
+        if (!newTrack) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); return; }
+        await sender.replaceTrack(newTrack);
+        previousTrack?.stop();
     }
 
     setRemoteVolume(volume: number): void {
@@ -144,14 +149,15 @@ export class JsSIPSession implements ISipSession {
     async shareScreen(): Promise<void> {
         const pc = this.session.connection as RTCPeerConnection | undefined;
         if (!pc) throw new Error("No active peer connection");
-        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
-        const screenTrack = stream.getVideoTracks()[0];
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) {
-            this.originalVideoTrack = sender.track ?? undefined;
-            await sender.replaceTrack(screenTrack);
-            screenTrack.onended = () => this.stopScreenSharing();
-        }
+        if (!sender) throw new Error("No video sender available for screen sharing");
+        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
+        const [track] = stream.getVideoTracks();
+        if (!track) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); throw new Error("No screen video track available"); }
+        this.originalVideoTrack = sender.track ?? undefined;
+        this.screenTrack = track;
+        await sender.replaceTrack(track);
+        track.onended = () => { this.stopScreenSharing().catch(() => {}); };
     }
 
     async stopScreenSharing(): Promise<void> {
@@ -160,8 +166,10 @@ export class JsSIPSession implements ISipSession {
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (sender && this.originalVideoTrack) {
             await sender.replaceTrack(this.originalVideoTrack);
-            this.originalVideoTrack = undefined;
         }
+        this.screenTrack?.stop();
+        this.screenTrack = undefined;
+        this.originalVideoTrack = undefined;
     }
 
     async getStats(): Promise<CallStats> {
@@ -181,7 +189,7 @@ export class JsSIPProvider implements ISipProvider {
         onRegister: ISipRegisterDelegate,
         _onSipLog?: (level: string, category: string, label: string, content: string) => void
     ): Promise<void> {
-        const { domain, phone, secret, nameexten, server, iceServers } = credentials;
+        const { domain, phone, secret, nameexten, server, iceServers, authorizationUsername } = credentials;
 
         if (!server) throw new Error("'server' (WebSocket URL) is required for the JsSIP provider.");
 
@@ -190,6 +198,7 @@ export class JsSIPProvider implements ISipProvider {
         const configuration = {
             sockets: [socket],
             uri: `sip:${phone}@${domain}`,
+            authorization_user: authorizationUsername ?? phone,
             password: secret,
             display_name: nameexten ?? phone,
             register: true,

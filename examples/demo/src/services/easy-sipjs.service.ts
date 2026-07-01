@@ -100,8 +100,6 @@ class EasySipService {
                 this.notify();
             };
 
-            await this.client.register();
-
             this.client.onRegister.onAccept = () => {
                 this.addLog("Registro aceito", 'info');
                 this.state = "registered";
@@ -113,6 +111,8 @@ class EasySipService {
                 this.state = "error";
                 this.notify();
             };
+
+            await this.client.register();
 
         } catch (error) {
             this.addLog(`Erro crítico no registro: ${error}`, 'error');

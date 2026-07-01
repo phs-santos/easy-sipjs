@@ -1,4 +1,4 @@
-import { SipConnectionState, SipInvitation } from './types';
+import { SipConnectionState, SipInvitation } from './types.js';
 
 export type SipEventMap = {
     connect: [];
@@ -33,7 +33,14 @@ export class SipEventEmitter {
 
     emit<K extends keyof SipEventMap>(event: K, ...args: SipEventMap[K]): void {
         const arr = this.listeners[event];
-        if (arr) (arr as Listener<any[]>[]).forEach(l => l(...args));
+        if (!arr) return;
+        for (const listener of arr as Listener<any[]>[]) {
+            try {
+                listener(...args);
+            } catch (err) {
+                queueMicrotask(() => { throw err; });
+            }
+        }
     }
 
     removeAllListeners(event?: keyof SipEventMap): void {

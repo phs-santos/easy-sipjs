@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { SipClient, SipClientOptions } from '../index';
-import { SipCredentials, SipConnectionState, SipInvitation } from '../core/types';
-import { ISipSession } from '../core/provider';
+import { SipClient, SipClientOptions } from '../index.js';
+import { SipCredentials, SipConnectionState, SipInvitation } from '../core/types.js';
+import { ISipSession } from '../core/provider.js';
 
 export interface UseSipClientReturn {
     client: SipClient;
@@ -22,6 +22,16 @@ export function useSipClient(
     const [incomingInvitation, setIncomingInvitation] = useState<SipInvitation | undefined>(undefined);
     const remoteRef = useRef<HTMLAudioElement | null>(null);
 
+    // Stable key derived from identity-relevant fields; changing any of these
+    // triggers a full re-registration with the new credentials.
+    const credentialsKey = JSON.stringify({
+        domain: credentials.domain,
+        phone: credentials.phone,
+        server: credentials.server,
+        authorizationUsername: credentials.authorizationUsername,
+        provider: options?.provider,
+    });
+
     useEffect(() => {
         client.onConnectionStateChange = setConnectionState;
 
@@ -34,13 +44,13 @@ export function useSipClient(
             };
         };
 
-        client.register().catch(err => console.error('[easy-sipjs] Registration failed:', err));
+        client.updateCredentials(credentials).catch(err => console.error('[easy-sipjs] Registration failed:', err));
 
         return () => {
             client.unregister().catch(console.error);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [credentialsKey]);
 
     const acceptCall = useCallback(async (opts?: { video?: boolean }): Promise<ISipSession | undefined> => {
         if (!incomingInvitation) return undefined;

@@ -3,6 +3,9 @@ export interface StoredCredentials {
   phone: string;
   secret: string;
   nameexten?: string;
+  /** If set, used as the SIP auth username instead of `phone`.
+   *  Needed when the PJSIP/SIP endpoint auth username differs from the DID. */
+  authorizationUsername?: string;
   server: string;
   debug?: boolean;
   provider?: 'sipjs' | 'jssip';
@@ -35,7 +38,7 @@ export interface MessageRecord {
   read: boolean;
 }
 
-export type ActiveView = "dialer" | "history" | "messages" | "settings";
+export type ActiveView = "dialer" | "history" | "messages" | "settings" | "monitor";
 
 export interface SipLogEntry {
   id: string;

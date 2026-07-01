@@ -3,6 +3,10 @@ export interface SipCredentials {
     phone: string;
     secret: string;
     nameexten?: string;
+    /** Auth username for the SIP REGISTER. Defaults to `phone` if omitted.
+     *  Set this when the SIP/PJSIP endpoint auth username differs from the
+     *  phone/DID number (common with Asterisk PJSIP endpoints). */
+    authorizationUsername?: string;
     server?: string;
     userAgentString?: string;
     iceServers?: RTCIceServer[];

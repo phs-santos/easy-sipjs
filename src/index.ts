@@ -5,12 +5,12 @@ import {
     SipInvitation,
     AnswerOptions,
     SipConnectionState,
-} from "./core/types";
-import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider";
-import { SipJSProvider } from "./core/sipjs-provider";
-import { JsSIPProvider } from "./core/jssip-provider";
-import { SipAudioSynthesizer } from "./core/audio-synthesizer";
-import { SipEventEmitter, SipEventMap } from "./core/event-emitter";
+} from "./core/types.js";
+import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider.js";
+import { SipJSProvider } from "./core/sipjs-provider.js";
+import { JsSIPProvider } from "./core/jssip-provider.js";
+import { SipAudioSynthesizer } from "./core/audio-synthesizer.js";
+import { SipEventEmitter, SipEventMap } from "./core/event-emitter.js";
 
 export interface SipClientOptions {
     provider?: 'sipjs' | 'jssip';
@@ -203,6 +203,8 @@ export class SipClient {
         this.intentionalDisconnect = false;
         this.setConnectionState('connecting');
 
+        try { await this.provider.unregister(); } catch (_) { /* no active UA yet */ }
+
         const internalUserAgentDelegate: ISipUserAgentDelegate = {
             onConnect: (data) => {
                 this.setConnectionState('connected');
@@ -220,6 +222,7 @@ export class SipClient {
                 }
             },
             onInvite: (invitation) => {
+                console.log(`[easy-sipjs][2] SipClient internalDelegate.onInvite fired — emitter listeners=${(this.emitter as any).listeners?.invite?.length ?? 0}`);
                 this.playRingtone();
 
                 const originalAccept = invitation.accept.bind(invitation);
@@ -241,7 +244,9 @@ export class SipClient {
                 };
 
                 this.onUserAgent.onInvite?.(invitation);
+                console.log('[easy-sipjs][2] emitter.emit("invite") firing…');
                 this.emitter.emit('invite', invitation);
+                console.log('[easy-sipjs][2] emitter.emit("invite") done');
             },
             onMessage: (msg) => {
                 this.onUserAgent.onMessage?.(msg);
@@ -342,9 +347,9 @@ export class SipClient {
 
     // ─── Reconnect with exponential backoff ───────────────────────────────────
 
-    private getReconnectDelay(): number {
+    private getReconnectDelay(attempt: number): number {
         return Math.min(
-            this.reconnectDelay * Math.pow(2, this.reconnectAttempt - 1),
+            this.reconnectDelay * Math.pow(2, attempt - 1),
             this.maxReconnectDelay
         );
     }
@@ -356,13 +361,13 @@ export class SipClient {
             return;
         }
 
-        const delay = this.getReconnectDelay();
+        const nextAttempt = this.reconnectAttempt + 1;
+        const delay = this.getReconnectDelay(nextAttempt);
         this.reconnectTimer = setTimeout(async () => {
             this.reconnectTimer = undefined;
-            this.reconnectAttempt++;
+            this.reconnectAttempt = nextAttempt;
             this.onSipLog?.("info", "sip.Client", "", `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
             try {
-                try { await this.provider.unregister(); } catch (_) {}
                 await this.register();
             } catch (error) {
                 this.onSipLog?.("error", "sip.Client", "", `Falha na tentativa de reconexão: ${error}`);
@@ -432,14 +437,25 @@ export class SipClient {
 
     private trackSession(session: ISipSession) {
         this.sessions.push(session);
-        const originalOnTerminate = session.onTerminate;
-        session.onTerminate = () => {
+
+        // Use a closure + defineProperty so that user code can set session.onTerminate
+        // after this point without clobbering the internal cleanup (session removal,
+        // activeSessionId reset). The setter keeps the user's fn; the internal cleanup
+        // always runs first and then delegates to it.
+        let userOnTerminate = session.onTerminate;
+        const internalCleanup = () => {
             this.sessions = this.sessions.filter(s => s.id !== session.id);
             if (this.activeSessionId === session.id) {
                 this.activeSessionId = undefined;
             }
-            if (originalOnTerminate) originalOnTerminate();
+            userOnTerminate?.();
         };
+        Object.defineProperty(session, 'onTerminate', {
+            get: () => internalCleanup,
+            set: (fn: (() => void) | undefined) => { userOnTerminate = fn; },
+            configurable: true,
+            enumerable: true,
+        });
     }
 
     // ─── Call control ─────────────────────────────────────────────────────────
@@ -541,6 +557,10 @@ export class SipClient {
         this.stopAllSounds();
         this.cleanupNetworkMonitoring();
 
+        for (const session of [...this.sessions]) {
+            try { await session.bye(); } catch (_) { /* continue */ }
+        }
+
         await this.provider.unregister();
         this.sessions = [];
         this.activeSessionId = undefined;
@@ -548,8 +568,8 @@ export class SipClient {
     }
 }
 
-export * from "./core/types";
-export * from "./core/provider";
-export * from "./core/sipjs-provider";
-export * from "./core/jssip-provider";
-export * from "./core/event-emitter";
+export * from "./core/types.js";
+export * from "./core/provider.js";
+export * from "./core/sipjs-provider.js";
+export * from "./core/jssip-provider.js";
+export * from "./core/event-emitter.js";
