@@ -154,21 +154,28 @@ export class SipJSSession implements ISipSession {
     }
 
     async bye(): Promise<void> {
-        switch (this.session.state) {
-            case SessionState.Initial:
-            case SessionState.Establishing:
-                if (this.session instanceof Inviter) {
-                    await this.session.cancel();
-                } else if (this.session instanceof Invitation) {
-                    await this.session.reject();
-                }
-                return;
-            case SessionState.Established:
-                await this.session.bye();
-                return;
-            case SessionState.Terminating:
-            case SessionState.Terminated:
-                return;
+        try {
+            switch (this.session.state) {
+                case SessionState.Initial:
+                case SessionState.Establishing:
+                    if (this.session instanceof Inviter) {
+                        await this.session.cancel();
+                    } else if (this.session instanceof Invitation) {
+                        await this.session.reject();
+                    }
+                    break;
+                case SessionState.Established:
+                    await this.session.bye();
+                    break;
+                case SessionState.Terminating:
+                case SessionState.Terminated:
+                    break;
+            }
+        } finally {
+            // A ação local de desligar precisa refletir imediatamente na UI,
+            // mesmo se o peer/proxy demorar para devolver o estado final.
+            this.cleanupMedia();
+            this.emitTerminatedOnce();
         }
     }
 

@@ -51,7 +51,31 @@ O consumidor não precisa configurar `UserAgent`, `Registerer`, `Inviter`, `Sess
 - **Presença/BLF**: `subscribePresence()` com status normalizados.
 - **Logs seguros**: redaction de Authorization, nonce, response, secrets e usuários SIP.
 - **ESM correto**: NodeNext com imports `.js` válidos.
-- **Exemplo softphone premium**: UI de demonstração com UX de call center.
+- **Exemplo softphone premium em Vue 3**: UI de demonstração com UX de call center.
+
+
+
+## Vue 3
+
+A biblioteca expõe um composable opcional para projetos Vue:
+
+```ts
+import { useSipClient } from 'easy-sipjs/vue';
+
+const softphone = useSipClient({
+  domain: 'pbx.example.com',
+  phone: '1001',
+  secret: 'senha-do-ramal',
+  server: 'wss://pbx.example.com:8089/ws',
+}, {
+  preset: 'asterisk',
+  provider: 'sipjs',
+});
+
+await softphone.dial('4002');
+```
+
+O exemplo `examples/softphone` agora é Vue 3 + Vite + TypeScript, sem React.
 
 ---
 
@@ -186,11 +210,9 @@ Status normalizados:
 
 O projeto `examples/softphone` foi redesenhado para demonstração com clientes:
 
-- paleta escura para reduzir fadiga;
-- azul para confiança e tecnologia;
-- verde para ação segura/registrado/atender;
-- âmbar para atenção sem pânico;
-- vermelho apenas para risco, falha e desligar;
+- layout focado em teste rápido de chamada;
+- status de conexão e chamada sempre visíveis;
+- controles críticos bem separados dos ajustes operacionais;
 - cards com glassmorphism, hierarquia clara e CTAs grandes;
 - painel de qualidade, monitor técnico, health check e diagnóstico.
 

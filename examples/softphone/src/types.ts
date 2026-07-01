@@ -3,12 +3,10 @@ export interface StoredCredentials {
   phone: string;
   secret: string;
   nameexten?: string;
-  /** If set, used as the SIP auth username instead of `phone`.
-   *  Needed when the PJSIP/SIP endpoint auth username differs from the DID. */
   authorizationUsername?: string;
   server: string;
   debug?: boolean;
-  provider?: 'sipjs' | 'jssip';
+  provider?: "sipjs" | "jssip";
 }
 
 export interface DevicePrefs {

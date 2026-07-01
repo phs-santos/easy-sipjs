@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.7.0] - 2026-07-01
+
+### Alterado
+- Exemplo `examples/softphone` migrado de React para **Vue 3 + Vite + TypeScript**.
+- UI do discador compactada para não cortar o botão inferior em telas com pouca altura.
+- Conteúdo principal agora usa scroll interno controlado (`100dvh`) em vez de cortar cards.
+- Monitor técnico permanece ao lado do telefone na tela inicial quando não há chamada ativa.
+
+### Adicionado
+- Export `easy-sipjs/vue` com composable `useSipClient()` para projetos Vue.
+- Dependência `vue` marcada como peer dependency opcional.
+
+### Removido
+- Export `easy-sipjs/react` e exemplo React.
+
+
+## [2.6.1] - 2026-07-01
+
+### Corrigido
+- Desligamento local da chamada no softphone: a UI remove a sessão imediatamente e o core emite término local mesmo se o proxy/peer demorar a finalizar.
+- Layout da chamada ativa ajustado para não forçar scroll da página; cards técnicos usam scroll interno.
+
+### Alterado
+- Monitor técnico passa a aparecer ao lado do discador na tela inicial quando não há ligação ativa.
+- Removidos textos explicativos da interface de demonstração que não agregavam ao teste do cliente.
+
 ## [2.6.0] - 2026-07-01
 
 ### Adicionado
@@ -13,7 +39,7 @@
 - Resubscribe automático de presença/BLF após registro/reconexão.
 
 ### Alterado
-- Softphone de exemplo redesenhado com UX/UI premium: glassmorphism, hierarquia visual, status cards, diagnóstico, health check, qualidade de chamada e paleta baseada em confiança/segurança.
+- Softphone de exemplo redesenhado com UX/UI premium: glassmorphism, hierarquia visual, status cards, diagnóstico, health check, qualidade de chamada.
 - `README.md` e `NPM.md` atualizados para explicar a API fácil e os novos recursos.
 
 ### Corrigido

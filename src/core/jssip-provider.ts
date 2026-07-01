@@ -81,7 +81,15 @@ export class JsSIPSession implements ISipSession {
     }
 
     async bye(): Promise<void> {
-        this.session.terminate();
+        try {
+            this.session.terminate();
+        } finally {
+            if (this.remoteElement) {
+                try { this.remoteElement.pause(); } catch (_) {}
+                this.remoteElement.srcObject = null;
+            }
+            this.onTerminate?.();
+        }
     }
 
     mute(): void { this.session.mute({ audio: true }); }
