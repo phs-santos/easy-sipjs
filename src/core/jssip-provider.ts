@@ -115,6 +115,14 @@ export class JsSIPSession implements ISipSession {
         }
     }
 
+    getLocalStream(): MediaStream | undefined {
+        const pc = this.session.connection as RTCPeerConnection | undefined;
+        if (!pc) return undefined;
+        const tracks = pc.getSenders().map(sender => sender.track).filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio');
+        if (!tracks.length) return undefined;
+        return new MediaStream(tracks);
+    }
+
     async setAudioOutput(deviceId: string): Promise<void> {
         if (!this.remoteElement) return;
         if (typeof (this.remoteElement as any).setSinkId === 'function') {
@@ -237,6 +245,20 @@ export class JsSIPProvider implements ISipProvider {
         });
 
         this.ua.on("newMessage", (data: any) => { onUserAgent.onMessage?.(data); });
+
+        // NOTIFY fora de diálogo (ex: MWI/voicemail via `Event: message-summary`,
+        // presence/BLF) chegava até o JsSIP mas nunca era repassado pra cima —
+        // o UA emite 'sipEvent' com { event, request }, e não existia nenhum
+        // listener pra isso.
+        this.ua.on("sipEvent", (data: any) => {
+            onUserAgent.onNotify?.({
+                event: data?.event?.event,
+                params: data?.event?.params,
+                body: data?.request?.body,
+                from: data?.request?.from?.uri?.toString?.(),
+                raw: data
+            });
+        });
 
         this.ua.start();
     }

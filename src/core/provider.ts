@@ -77,6 +77,12 @@ export interface ISipSession {
     stopScreenSharing(): Promise<void>;
     getStats(): Promise<CallStats>;
     getQuality(): Promise<CallQualitySnapshot>;
+
+    /** Stream local (mic) já em uso pela chamada — útil pra gravação/análise
+     * externa sem precisar abrir uma segunda captura própria do microfone
+     * (que em vários headsets Bluetooth simplesmente não funciona em
+     * paralelo com a captura que a própria chamada já mantém). */
+    getLocalStream?(): MediaStream | undefined;
 }
 
 export interface ISipUserAgentDelegate {
