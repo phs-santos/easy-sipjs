@@ -5,13 +5,13 @@ export type SipEventMap = {
     connect: [];
     disconnect: [error?: Error];
     registered: [];
-    'register-failed': [error?: any];
+    'register-failed': [error?: unknown];
     'registration-expiring': [];
     invite: [invitation: SipInvitation];
-    message: [message: any];
-    notify: [notification: any];
-    refer: [referral: any];
-    subscribe: [subscription: any];
+    message: [message: unknown];
+    notify: [notification: unknown];
+    refer: [referral: unknown];
+    subscribe: [subscription: unknown];
     presence: [presence: PresenceEvent];
     health: [status: SipHealthStatus];
     response: [event: SipResponseEvent];
@@ -24,7 +24,7 @@ export type SipEventMap = {
     'connection-state': [state: SipConnectionState];
 };
 
-type Listener<Args extends any[]> = (...args: Args) => void;
+type Listener<Args extends unknown[]> = (...args: Args) => void;
 
 export class SipEventEmitter {
     private listeners: Partial<{ [K in keyof SipEventMap]: Listener<SipEventMap[K]>[] }> = {};
@@ -46,7 +46,7 @@ export class SipEventEmitter {
     emit<K extends keyof SipEventMap>(event: K, ...args: SipEventMap[K]): void {
         const arr = this.listeners[event];
         if (!arr) return;
-        for (const listener of [...arr] as Listener<any[]>[]) {
+        for (const listener of [...arr] as Listener<unknown[]>[]) {
             try {
                 listener(...args);
             } catch (err) {

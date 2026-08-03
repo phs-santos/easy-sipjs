@@ -11,6 +11,10 @@ import {
     SessionState,
     Subscriber,
     SubscriptionState,
+    Notification,
+    InvitationAcceptOptions,
+    InvitationRejectOptions,
+    Core,
 } from "sip.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
 import {
@@ -32,44 +36,8 @@ import {
 import { handleStateChanges } from "./media.js";
 import { ensureSipPrefix, parseRTCStats } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
-
-interface OutgoingRequestDelegate {
-    onAccept?: (response: any) => void;
-    onProgress?: (response: any) => void;
-    onRedirect?: (response: any) => void;
-    onReject?: (response: any) => void;
-    onTrying?: (response: any) => void;
-}
-
-type SessionListener<K extends keyof SipSessionEventMap> = (...args: SipSessionEventMap[K]) => void;
-
-class SessionEventBus {
-    private listeners: Partial<{ [K in keyof SipSessionEventMap]: SessionListener<K>[] }> = {};
-
-    on<K extends keyof SipSessionEventMap>(event: K, listener: SessionListener<K>): () => void {
-        if (!this.listeners[event]) this.listeners[event] = [];
-        (this.listeners[event] as SessionListener<K>[]).push(listener);
-        return () => this.off(event, listener);
-    }
-
-    off<K extends keyof SipSessionEventMap>(event: K, listener: SessionListener<K>): void {
-        const arr = this.listeners[event] as SessionListener<K>[] | undefined;
-        if (!arr) return;
-        this.listeners[event] = arr.filter(l => l !== listener) as any;
-    }
-
-    emit<K extends keyof SipSessionEventMap>(event: K, ...args: SipSessionEventMap[K]): void {
-        const arr = this.listeners[event] as SessionListener<K>[] | undefined;
-        if (!arr) return;
-        for (const listener of [...arr]) {
-            try {
-                listener(...args);
-            } catch (error) {
-                queueMicrotask(() => { throw error; });
-            }
-        }
-    }
-}
+import { SessionEventBus, SessionListener } from "./session-event-bus.js";
+import { parsePresenceBody } from "./presence.js";
 
 function toSessionStatus(state: SessionState): SipSessionStatus {
     switch (state) {
@@ -82,10 +50,10 @@ function toSessionStatus(state: SessionState): SipSessionStatus {
     }
 }
 
-function responseToProgressEvent(response: any, fallbackStatus = 180): SipSessionProgressEvent {
-    const message = response?.message;
-    const statusCode = message?.statusCode ?? fallbackStatus;
-    const body = message?.body ?? '';
+function responseToProgressEvent(response: Core.IncomingResponse, fallbackStatus = 180): SipSessionProgressEvent {
+    const message = response.message;
+    const statusCode = message.statusCode ?? fallbackStatus;
+    const body = message.body ?? '';
     return {
         method: 'INVITE',
         statusCode,
@@ -188,7 +156,7 @@ export class SipJSSession implements ISipSession {
         if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
         this.reinviteInProgress = true;
         try {
-            await (this.session as any).invite({
+            await this.session.invite({
                 sessionDescriptionHandlerModifiers: [SipJSSession.holdSdpModifier],
             });
             this.toggleAudioTracks(false);
@@ -203,7 +171,7 @@ export class SipJSSession implements ISipSession {
         if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
         this.reinviteInProgress = true;
         try {
-            await (this.session as any).invite({
+            await this.session.invite({
                 sessionDescriptionHandlerModifiers: [],
             });
             if (!this._muted) this.toggleAudioTracks(true);
@@ -227,13 +195,13 @@ export class SipJSSession implements ISipSession {
             if (!uri) throw new Error(`Invalid transfer target URI: ${raw}`);
             await this.session.refer(uri, {
                 requestDelegate: {
-                    onReject: (response: any) => this.emitFailed({
-                        statusCode: response?.message?.statusCode,
-                        reasonPhrase: response?.message?.reasonPhrase,
+                    onReject: (response) => this.emitFailed({
+                        statusCode: response.message.statusCode,
+                        reasonPhrase: response.message.reasonPhrase,
                         cause: response,
                     }),
                 },
-            } as any);
+            });
         } else {
             const otherSession = (target as SipJSSession).getRawSession?.();
             if (!otherSession) throw new Error("Invalid transfer target session");
@@ -243,8 +211,8 @@ export class SipJSSession implements ISipSession {
 
     async setAudioOutput(deviceId: string): Promise<void> {
         if (!this.remoteElement) return;
-        if (typeof (this.remoteElement as any).setSinkId === 'function') {
-            await (this.remoteElement as any).setSinkId(deviceId);
+        if (typeof this.remoteElement.setSinkId === 'function') {
+            await this.remoteElement.setSinkId(deviceId);
         }
     }
 
@@ -270,7 +238,7 @@ export class SipJSSession implements ISipSession {
     setRemoteVolume(volume: number): void {
         if (!this.remoteElement) return;
         if (!this.audioCtx) {
-            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) {
                 this.remoteElement.volume = Math.min(1, Math.max(0, volume));
                 return;
@@ -458,7 +426,7 @@ export class SipJSSession implements ISipSession {
             try {
                 pc.restartIce?.();
                 if (this.session.state === SessionState.Established) {
-                    await (this.session as any).invite({ requestDelegate: {} });
+                    await this.session.invite({ requestDelegate: {} });
                 }
                 this.bus.emit('media-state', {
                     iceConnectionState: pc.iceConnectionState,
@@ -481,7 +449,7 @@ export class SipJSSession implements ISipSession {
                 },
             },
         };
-        await (this.session as any).info(options);
+        await this.session.info(options);
         this.bus.emit('dtmf', { tone, durationMs, mode: 'sip-info' });
     }
 
@@ -495,8 +463,8 @@ export class SipJSSession implements ISipSession {
     }
 
     private getPeerConnection(): RTCPeerConnection | undefined {
-        const handler = this.session.sessionDescriptionHandler as any;
-        return handler?.peerConnection as RTCPeerConnection | undefined;
+        const handler = this.session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
+        return handler?.peerConnection;
     }
 
     private cleanupMedia(): void {
@@ -517,23 +485,17 @@ export class SipJSSession implements ISipSession {
     }
 
     private toggleAudioTracks(enabled: boolean): void {
-        const handler = this.session.sessionDescriptionHandler as any;
+        const handler = this.session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
         if (!handler) return;
-        if (handler.localMediaStream) {
-            (handler.localMediaStream as MediaStream).getAudioTracks().forEach(t => { t.enabled = enabled; });
-        }
-        const pc = handler.peerConnection as RTCPeerConnection | undefined;
-        pc?.getSenders().forEach(s => { if (s.track?.kind === 'audio') s.track.enabled = enabled; });
+        handler.localMediaStream?.getAudioTracks().forEach(t => { t.enabled = enabled; });
+        handler.peerConnection?.getSenders().forEach(s => { if (s.track?.kind === 'audio') s.track.enabled = enabled; });
     }
 
     private toggleVideoTracks(enabled: boolean): void {
-        const handler = this.session.sessionDescriptionHandler as any;
+        const handler = this.session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
         if (!handler) return;
-        if (handler.localMediaStream) {
-            (handler.localMediaStream as MediaStream).getVideoTracks().forEach(t => { t.enabled = enabled; });
-        }
-        const pc = handler.peerConnection as RTCPeerConnection | undefined;
-        pc?.getSenders().forEach(s => { if (s.track?.kind === 'video') s.track.enabled = enabled; });
+        handler.localMediaStream?.getVideoTracks().forEach(t => { t.enabled = enabled; });
+        handler.peerConnection?.getSenders().forEach(s => { if (s.track?.kind === 'video') s.track.enabled = enabled; });
     }
 
     // Asterisk/PxTalk-friendly hold strategy. Many Asterisk paths mirror direction
@@ -640,7 +602,7 @@ export class SipJSProvider implements ISipProvider {
 
         this.registerer = new Registerer(this.userAgent, { expires: 3600 });
 
-        const registerDelegate: OutgoingRequestDelegate = {
+        const registerDelegate: Core.OutgoingRequestDelegate = {
             onAccept: (response) => {
                 this.registered = true;
                 onRegister.onAccept?.(response);
@@ -704,7 +666,7 @@ export class SipJSProvider implements ISipProvider {
         const subscriber = new Subscriber(this.userAgent, uri, options.event ?? 'presence', {
             expires: options.expires ?? 3600,
             extraHeaders: options.extraHeaders,
-        } as any);
+        });
 
         subscriber.delegate = {
             onNotify: (notification) => {
@@ -763,8 +725,8 @@ export class SipJSProvider implements ISipProvider {
                 onAccept: () => undefined,
                 onReject: (response) => {
                     sipSession.emitFailed({
-                        statusCode: response?.message?.statusCode ?? 0,
-                        reasonPhrase: response?.message?.reasonPhrase,
+                        statusCode: response.message.statusCode ?? 0,
+                        reasonPhrase: response.message.reasonPhrase,
                         cause: response,
                         originator: 'remote',
                     });
@@ -836,17 +798,17 @@ export class SipJSProvider implements ISipProvider {
         requestURI.user = undefined;
         const fromURI = aor.clone();
         const toURI = aor.clone();
-        const core = this.userAgent.userAgentCore as any;
+        const core = this.userAgent.userAgentCore;
         const message = core.makeOutgoingRequestMessage("OPTIONS", requestURI, fromURI, toURI, {});
 
         await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("OPTIONS ping timed out.")), 7000);
             const request = core.request(message, {
-                onAccept: () => { clearTimeout(timeout); request?.dispose?.(); resolve(); },
-                onReject: (response: any) => {
+                onAccept: () => { clearTimeout(timeout); request.dispose(); resolve(); },
+                onReject: (response) => {
                     clearTimeout(timeout);
-                    request?.dispose?.();
-                    const statusCode = response?.message?.statusCode;
+                    request.dispose();
+                    const statusCode = response.message.statusCode;
                     if (statusCode === 408 || statusCode === 503) {
                         reject(new Error(`OPTIONS ping failed with SIP ${statusCode}.`));
                     } else {
@@ -857,25 +819,10 @@ export class SipJSProvider implements ISipProvider {
         });
     }
 
-    private parsePresenceNotification(target: string, notification: any): PresenceEvent {
-        const body = notification?.request?.body ?? '';
-        const contentType = notification?.request?.getHeader?.('Content-Type') ?? undefined;
-        const lower = String(body).toLowerCase();
-        let status: PresenceEvent['status'] = 'unknown';
-
-        if (lower.includes('<basic>open</basic>') || lower.includes('state="early"')) status = 'available';
-        if (lower.includes('<basic>closed</basic>') || lower.includes('terminated')) status = 'offline';
-        if (lower.includes('confirmed') || lower.includes('busy')) status = 'busy';
-        if (lower.includes('proceeding') || lower.includes('ringing')) status = 'ringing';
-
-        return {
-            target,
-            extension: target.replace(/^sips?:/i, '').split('@')[0],
-            status,
-            body,
-            contentType,
-            raw: notification,
-        };
+    private parsePresenceNotification(target: string, notification: Notification): PresenceEvent {
+        const body = notification.request.body ?? '';
+        const contentType = notification.request.getHeader('Content-Type') ?? undefined;
+        return parsePresenceBody(target, body, contentType, notification);
     }
 
     private mapToInvitation(invitation: Invitation): SipInvitation {
@@ -884,14 +831,14 @@ export class SipJSProvider implements ISipProvider {
                 uri: { user: invitation.remoteIdentity.uri.user! },
                 displayName: invitation.remoteIdentity.displayName
             },
-            accept: async (options) => { await invitation.accept(options); },
-            reject: async (options) => { await invitation.reject(options); },
+            accept: async (options) => { await invitation.accept(options as InvitationAcceptOptions | undefined); },
+            reject: async (options) => { await invitation.reject(options as InvitationRejectOptions | undefined); },
             raw: invitation
         };
     }
 
     private patchContentLengthForModifiedSipBodies(): void {
-        const transport = (this.userAgent as any)?.transport;
+        const transport = this.userAgent?.transport;
         if (!transport || typeof transport.onMessage !== 'function') return;
         const origOnMessage = transport.onMessage.bind(transport);
         transport.onMessage = (raw: string) => {

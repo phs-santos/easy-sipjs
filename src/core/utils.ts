@@ -1,5 +1,16 @@
 import { CallStats } from "./types.js";
 
+interface RTCRtpStreamStatsLike extends RTCStats {
+    kind?: string;
+    jitter?: number;
+    packetsLost?: number;
+    packetsReceived?: number;
+    bytesReceived?: number;
+    bytesSent?: number;
+    roundTripTime?: number;
+    mimeType?: string;
+}
+
 export function ensureSipPrefix(uri: string): string {
     if (!uri) return uri;
     return uri.startsWith("sip:") ? uri : `sip:${uri}`;
@@ -14,7 +25,7 @@ export async function parseRTCStats(pc: RTCPeerConnection): Promise<CallStats> {
     const stats = await pc.getStats();
     const result: CallStats = { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
 
-    stats.forEach((s: any) => {
+    stats.forEach((s: RTCRtpStreamStatsLike) => {
         if (s.type === 'inbound-rtp' && s.kind === 'audio') {
             result.jitter = s.jitter ?? 0;
             const lost = s.packetsLost ?? 0;

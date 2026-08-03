@@ -86,21 +86,21 @@ export interface ISipSession {
 }
 
 export interface ISipUserAgentDelegate {
-    onConnect?: (data?: any) => void;
+    onConnect?: (data?: unknown) => void;
     onDisconnect?: (error?: Error) => void;
     onInvite?: (invitation: SipInvitation) => void;
-    onMessage?: (message: any) => void;
-    onNotify?: (notification: any) => void;
-    onRefer?: (referral: any) => void;
-    onRegister?: (registration: any) => void;
-    onSubscribe?: (subscription: any) => void;
+    onMessage?: (message: unknown) => void;
+    onNotify?: (notification: unknown) => void;
+    onRefer?: (referral: unknown) => void;
+    onRegister?: (registration: unknown) => void;
+    onSubscribe?: (subscription: unknown) => void;
     onPresence?: (presence: PresenceEvent) => void;
 }
 
 export interface ISipRegisterDelegate {
-    onAccept?: (data?: any) => void;
-    onReject?: (error?: any) => void;
+    onAccept?: (data?: unknown) => void;
+    onReject?: (error?: unknown) => void;
     onTrying?: () => void;
-    onRedirect?: (data?: any) => void;
+    onRedirect?: (data?: unknown) => void;
     onExpiring?: () => void;
 }

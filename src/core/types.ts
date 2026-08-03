@@ -212,15 +212,15 @@ export interface SipInvitation {
         };
         displayName: string;
     };
-    accept(options?: any): Promise<void>;
-    reject(options?: any): Promise<void>;
+    accept(options?: unknown): Promise<void>;
+    reject(options?: unknown): Promise<void>;
     onTerminate?: () => void;
-    raw: any;
+    raw: unknown;
 }
 
 export interface SipRegisterResult {
-    userAgent: any;
-    registerer: any;
+    userAgent: unknown;
+    registerer: unknown;
 }
 
 export interface CreateSoftphoneConfig {

@@ -1,10 +1,21 @@
 import JsSIP from "jssip";
 import type { DTMF_TRANSPORT } from "jssip/lib/Constants.js";
+import type { RTCSession, EndEvent, IncomingEvent, OutgoingEvent, IncomingDTMFEvent, OutgoingDTMFEvent, ReferEvent, AnswerOptions as JsSipAnswerOptions, TerminateOptions as JsSipTerminateOptions, DTMFOptions as JsSipDtmfOptions } from "jssip/lib/RTCSession.js";
+import type { UA, RTCSessionEvent, IncomingMessageEvent, OutgoingMessageEvent } from "jssip/lib/UA.js";
+import type { IncomingRequest } from "jssip/lib/SIPMessage.js";
+import type { Subscriber } from "jssip/lib/Subscriber.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot, DtmfOptions } from "./types.js";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot, DtmfOptions, SipSessionEventMap, SipFailureEvent, SipHealthStatus, PresenceSubscribeOptions } from "./types.js";
 import { assignStream } from "./media.js";
 import { ensureSipPrefix, parseRTCStats } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
+import { SessionEventBus, SessionListener } from "./session-event-bus.js";
+import { parsePresenceBody } from "./presence.js";
+
+interface JsSipNotifyEvent {
+    event: string;
+    params?: Record<string, unknown>;
+}
 
 export class JsSIPSession implements ISipSession {
     public readonly id: string;
@@ -22,57 +33,114 @@ export class JsSIPSession implements ISipSession {
     private screenTrack?: MediaStreamTrack;
     private audioCtx?: AudioContext;
     private gainNode?: GainNode;
+    private terminated = false;
+    private bus = new SessionEventBus();
 
-    constructor(private session: any) {
+    constructor(private session: RTCSession) {
         this.id = session.id || Math.random().toString(36).substring(2, 11);
 
-        this.session.on("progress", () => { this.onProgress?.(); });
+        this.session.on("progress", (event: IncomingEvent | OutgoingEvent) => {
+            this.onProgress?.();
+            this.bus.emit('state', 'establishing');
+            this.bus.emit('establishing');
+            const response = 'response' in event ? event.response : undefined;
+            this.bus.emit('progress', {
+                method: 'INVITE',
+                statusCode: response?.status_code ?? 180,
+                reasonPhrase: response?.reason_phrase,
+                raw: event,
+            });
+        });
 
         this.session.on("accepted", () => {
             this.startedAt = new Date();
             this.onConfirm?.();
+            this.bus.emit('state', 'established');
+            this.bus.emit('established');
         });
 
-        this.session.on("hold", () => { this.onHold?.(); });
-        this.session.on("unhold", () => { this.onUnhold?.(); });
+        this.session.on("hold", () => { this.onHold?.(); this.bus.emit('hold'); });
+        this.session.on("unhold", () => { this.onUnhold?.(); this.bus.emit('unhold'); });
 
-        this.session.on("peerconnection", (data: any) => {
-            const pc = data.peerconnection;
-            pc.addEventListener("addtrack", (event: any) => {
-                if (this.remoteElement && event.streams?.[0]) {
-                    assignStream(event.streams[0], this.remoteElement);
+        this.session.on("refer", (event) => {
+            this.bus.emit('refer', { referral: event, raw: event });
+        });
+
+        this.session.on("peerconnection", (event) => {
+            const pc = event.peerconnection;
+            pc.addEventListener("track", (trackEvent) => {
+                if (this.remoteElement && trackEvent.streams?.[0]) {
+                    assignStream(trackEvent.streams[0], this.remoteElement);
+                }
+            });
+
+            const emitMediaState = () => {
+                this.bus.emit('media-state', {
+                    iceConnectionState: pc.iceConnectionState,
+                    connectionState: pc.connectionState,
+                });
+            };
+            pc.addEventListener('connectionstatechange', emitMediaState);
+            pc.addEventListener('iceconnectionstatechange', () => {
+                emitMediaState();
+                if (pc.iceConnectionState === 'failed') {
+                    this.bus.emit('media-failed', { reason: 'ICE connection failed.' });
                 }
             });
         });
 
-        const cleanupAudio = () => {
-            if (this.remoteElement) {
-                try { this.remoteElement.pause(); } catch (_) {}
-                this.remoteElement.srcObject = null;
-            }
-        };
+        this.session.on("ended", (event: EndEvent) => {
+            this.cleanupAudio();
+            this.onTerminate?.();
+            this.emitTerminatedOnce({
+                reasonPhrase: event.cause,
+                cause: event,
+                originator: event.originator,
+            });
+        });
 
-        this.session.on("ended", () => { cleanupAudio(); this.onTerminate?.(); });
-        this.session.on("failed", (data: any) => {
-            cleanupAudio();
-            if (data?.originator !== "local") {
-                this.onReject?.(data?.message?.status_code ?? 0);
+        this.session.on("failed", (event: EndEvent) => {
+            this.cleanupAudio();
+            const statusCode = "status_code" in event.message ? (event.message as { status_code?: number }).status_code : undefined;
+            if (event.originator !== "local") {
+                this.onReject?.(statusCode ?? 0);
             }
             this.onTerminate?.();
+            this.bus.emit('failed', {
+                statusCode,
+                reasonPhrase: event.cause,
+                cause: event,
+                originator: event.originator,
+            });
+            this.emitTerminatedOnce({
+                statusCode,
+                reasonPhrase: event.cause,
+                cause: event,
+                originator: event.originator,
+            });
         });
 
-        this.session.on("newDTMF", (data: any) => {
-            if (this.onDTMF && data.dtmf) {
-                this.onDTMF(data.dtmf.tone);
+        this.session.on("newDTMF", (event: IncomingDTMFEvent | OutgoingDTMFEvent) => {
+            if (event.dtmf) {
+                this.onDTMF?.(event.dtmf.tone);
+                this.bus.emit('dtmf', { tone: event.dtmf.tone, durationMs: event.dtmf.duration });
             }
         });
+    }
+
+    on<K extends keyof SipSessionEventMap>(event: K, listener: (...args: SipSessionEventMap[K]) => void): () => void {
+        return this.bus.on(event, listener as SessionListener<K>);
+    }
+
+    off<K extends keyof SipSessionEventMap>(event: K, listener: (...args: SipSessionEventMap[K]) => void): void {
+        this.bus.off(event, listener as SessionListener<K>);
     }
 
     setRemoteElement(el: HTMLMediaElement) {
         this.remoteElement = el;
     }
 
-    getRawSession(): any {
+    getRawSession(): RTCSession {
         return this.session;
     }
 
@@ -82,14 +150,14 @@ export class JsSIPSession implements ISipSession {
     }
 
     async bye(): Promise<void> {
+        this.bus.emit('state', 'terminating');
+        this.bus.emit('terminating');
         try {
             this.session.terminate();
         } finally {
-            if (this.remoteElement) {
-                try { this.remoteElement.pause(); } catch (_) {}
-                this.remoteElement.srcObject = null;
-            }
+            this.cleanupAudio();
             this.onTerminate?.();
+            this.emitTerminatedOnce();
         }
     }
 
@@ -117,7 +185,7 @@ export class JsSIPSession implements ISipSession {
     }
 
     getLocalStream(): MediaStream | undefined {
-        const pc = this.session.connection as RTCPeerConnection | undefined;
+        const pc = this.session.connection;
         if (!pc) return undefined;
         const tracks = pc.getSenders().map(sender => sender.track).filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio');
         if (!tracks.length) return undefined;
@@ -126,13 +194,13 @@ export class JsSIPSession implements ISipSession {
 
     async setAudioOutput(deviceId: string): Promise<void> {
         if (!this.remoteElement) return;
-        if (typeof (this.remoteElement as any).setSinkId === 'function') {
-            await (this.remoteElement as any).setSinkId(deviceId);
+        if (typeof this.remoteElement.setSinkId === 'function') {
+            await this.remoteElement.setSinkId(deviceId);
         }
     }
 
     async setAudioInput(deviceId: string): Promise<void> {
-        const pc = this.session.connection as RTCPeerConnection | undefined;
+        const pc = this.session.connection;
         if (!pc) return;
         const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
         if (!sender) return;
@@ -147,7 +215,7 @@ export class JsSIPSession implements ISipSession {
     setRemoteVolume(volume: number): void {
         if (!this.remoteElement) return;
         if (!this.audioCtx) {
-            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return;
             this.audioCtx = new AudioCtx();
             const source = this.audioCtx.createMediaElementSource(this.remoteElement);
@@ -161,19 +229,20 @@ export class JsSIPSession implements ISipSession {
     }
 
     async sendDTMF(tone: string, options: DtmfOptions = {}): Promise<void> {
-        const dtmfOptions: { duration?: number; transportType?: DTMF_TRANSPORT } = {};
+        const dtmfOptions: JsSipDtmfOptions & { transportType?: DTMF_TRANSPORT } = {};
         if (options.durationMs !== undefined) dtmfOptions.duration = options.durationMs;
         if (options.mode === 'sip-info') dtmfOptions.transportType = JsSIP.C.DTMF_TRANSPORT.INFO;
         else if (options.mode === 'rtp-event') dtmfOptions.transportType = JsSIP.C.DTMF_TRANSPORT.RFC2833;
         this.session.sendDTMF(tone, dtmfOptions);
+        this.bus.emit('dtmf', { tone, durationMs: options.durationMs, mode: options.mode });
     }
 
     async shareScreen(): Promise<void> {
-        const pc = this.session.connection as RTCPeerConnection | undefined;
+        const pc = this.session.connection;
         if (!pc) throw new Error("No active peer connection");
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (!sender) throw new Error("No video sender available for screen sharing");
-        const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true });
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const [track] = stream.getVideoTracks();
         if (!track) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); throw new Error("No screen video track available"); }
         this.originalVideoTrack = sender.track ?? undefined;
@@ -183,7 +252,7 @@ export class JsSIPSession implements ISipSession {
     }
 
     async stopScreenSharing(): Promise<void> {
-        const pc = this.session.connection as RTCPeerConnection | undefined;
+        const pc = this.session.connection;
         if (!pc) return;
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (sender && this.originalVideoTrack) {
@@ -195,19 +264,37 @@ export class JsSIPSession implements ISipSession {
     }
 
     async getStats(): Promise<CallStats> {
-        const pc = this.session.connection as RTCPeerConnection | undefined;
+        const pc = this.session.connection;
         if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
         return parseRTCStats(pc);
     }
 
     async getQuality(): Promise<CallQualitySnapshot> {
-        return createCallQualitySnapshot(await this.getStats());
+        const snapshot = createCallQualitySnapshot(await this.getStats());
+        this.bus.emit('quality', snapshot);
+        return snapshot;
+    }
+
+    private cleanupAudio(): void {
+        if (this.remoteElement) {
+            try { this.remoteElement.pause(); } catch (_) {}
+            this.remoteElement.srcObject = null;
+        }
+    }
+
+    private emitTerminatedOnce(event?: SipFailureEvent): void {
+        if (this.terminated) return;
+        this.terminated = true;
+        this.bus.emit('state', 'terminated');
+        this.bus.emit('terminated', event);
     }
 }
 
 export class JsSIPProvider implements ISipProvider {
-    private ua?: any;
+    private ua?: UA;
     private domain?: string;
+    private onUserAgent?: ISipUserAgentDelegate;
+    private subscribers = new Map<string, Subscriber>();
 
     async register(
         credentials: SipCredentials,
@@ -220,6 +307,7 @@ export class JsSIPProvider implements ISipProvider {
         if (!server) throw new Error("'server' (WebSocket URL) is required for the JsSIP provider.");
 
         this.domain = domain;
+        this.onUserAgent = onUserAgent;
         const socket = new JsSIP.WebSocketInterface(server);
         const configuration = {
             sockets: [socket],
@@ -233,35 +321,36 @@ export class JsSIPProvider implements ISipProvider {
 
         this.ua = new JsSIP.UA(configuration);
 
-        this.ua.on("registered", (data: any) => { onRegister.onAccept?.(data); });
-        this.ua.on("registrationFailed", (data: any) => { onRegister.onReject?.(data); });
-        this.ua.on("connected", (data: any) => { onUserAgent.onConnect?.(data); });
-        this.ua.on("disconnected", (data: any) => { onUserAgent.onDisconnect?.(data); });
+        this.ua.on("registered", (event) => { onRegister.onAccept?.(event); });
+        this.ua.on("registrationFailed", (event) => { onRegister.onReject?.(event); });
+        this.ua.on("connected", (event) => { onUserAgent.onConnect?.(event); });
+        this.ua.on("disconnected", (event) => { onUserAgent.onDisconnect?.(); });
 
-        this.ua.on("newRTCSession", (data: any) => {
-            if (data.originator === "remote") {
-                const invitation = this.mapToInvitation(data.session);
+        this.ua.on("newRTCSession", (event: RTCSessionEvent) => {
+            if (event.originator === "remote") {
+                const invitation = this.mapToInvitation(event.session);
 
-                data.session.on("ended", () => { invitation.onTerminate?.(); });
-                data.session.on("failed", () => { invitation.onTerminate?.(); });
+                event.session.on("ended", () => { invitation.onTerminate?.(); });
+                event.session.on("failed", () => { invitation.onTerminate?.(); });
 
                 onUserAgent.onInvite?.(invitation);
             }
         });
 
-        this.ua.on("newMessage", (data: any) => { onUserAgent.onMessage?.(data); });
+        this.ua.on("newMessage", (event: IncomingMessageEvent | OutgoingMessageEvent) => { onUserAgent.onMessage?.(event); });
 
         // NOTIFY fora de diálogo (ex: MWI/voicemail via `Event: message-summary`,
         // presence/BLF) chegava até o JsSIP mas nunca era repassado pra cima —
         // o UA emite 'sipEvent' com { event, request }, e não existia nenhum
         // listener pra isso.
-        this.ua.on("sipEvent", (data: any) => {
+        this.ua.on("sipEvent", <T,>(event: { event: T; request: IncomingRequest }) => {
+            const notifyEvent = event.event as unknown as JsSipNotifyEvent;
             onUserAgent.onNotify?.({
-                event: data?.event?.event,
-                params: data?.event?.params,
-                body: data?.request?.body,
-                from: data?.request?.from?.uri?.toString?.(),
-                raw: data
+                event: notifyEvent?.event,
+                params: notifyEvent?.params,
+                body: event.request?.body,
+                from: event.request?.from?.uri?.toString?.(),
+                raw: event
             });
         });
 
@@ -296,7 +385,7 @@ export class JsSIPProvider implements ISipProvider {
     async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
         const { remoteElement, video, extraHeaders } = options;
 
-        const rawSession = invitation.raw;
+        const rawSession = invitation.raw as RTCSession;
         rawSession.answer({
             mediaConstraints: { audio: true, video: !!video },
             extraHeaders: extraHeaders || []
@@ -309,9 +398,57 @@ export class JsSIPProvider implements ISipProvider {
     }
 
     async unregister(): Promise<void> {
+        for (const subscriber of this.subscribers.values()) {
+            try { subscriber.terminate(); } catch (_) {}
+        }
+        this.subscribers.clear();
+
         if (this.ua) {
             this.ua.stop();
             this.ua = undefined;
+        }
+    }
+
+    async subscribePresence(target: string, options: PresenceSubscribeOptions = {}): Promise<void> {
+        if (!this.ua) throw new Error("UA not initialized");
+
+        const eventName = options.event ?? 'presence';
+        const resolvedTarget = this.resolveURI(target);
+        const key = `${eventName}:${resolvedTarget}`;
+        await this.unsubscribePresence(key);
+
+        const accept = eventName === 'dialog' ? 'application/dialog-info+xml' : 'application/pidf+xml';
+        const subscriber = this.ua.subscribe(resolvedTarget, eventName, accept, {
+            expires: options.expires ?? 3600,
+            extraHeaders: options.extraHeaders,
+        });
+
+        subscriber.on('notify', (_isFinal, _request, body, contentType) => {
+            const presence = parsePresenceBody(target, body, contentType, { body, contentType });
+            this.onUserAgent?.onPresence?.(presence);
+        });
+
+        subscriber.on('terminated', () => {
+            this.subscribers.delete(key);
+        });
+
+        this.subscribers.set(key, subscriber);
+        subscriber.subscribe();
+    }
+
+    async unsubscribePresence(target: string): Promise<void> {
+        const direct = this.subscribers.get(target);
+        if (direct) {
+            try { direct.terminate(); } catch (_) {}
+            this.subscribers.delete(target);
+            return;
+        }
+
+        for (const [key, subscriber] of [...this.subscribers.entries()]) {
+            if (key.includes(target)) {
+                try { subscriber.terminate(); } catch (_) {}
+                this.subscribers.delete(key);
+            }
         }
     }
 
@@ -320,17 +457,24 @@ export class JsSIPProvider implements ISipProvider {
         this.ua.sendMessage(this.resolveURI(destination), body);
     }
 
-    private mapToInvitation(session: any): SipInvitation {
+    private mapToInvitation(session: RTCSession): SipInvitation {
         return {
             remoteIdentity: {
                 uri: { user: session.remote_identity.uri.user },
                 displayName: session.remote_identity.display_name
             },
-            accept: async (options) => { session.answer(options); },
-            reject: async (options) => { session.terminate(options); },
+            accept: async (options) => { session.answer(options as JsSipAnswerOptions | undefined); },
+            reject: async (options) => { session.terminate(options as JsSipTerminateOptions | undefined); },
             raw: session
         };
     }
 
-    public getUA() { return this.ua; }
+    getHealth(): Partial<SipHealthStatus> {
+        return {
+            websocketConnected: this.ua?.isConnected() ?? false,
+            registered: this.ua?.isRegistered() ?? false,
+        };
+    }
+
+    public getUA(): UA | undefined { return this.ua; }
 }

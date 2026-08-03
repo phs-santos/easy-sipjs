@@ -6,14 +6,14 @@ export class SipAudioSynthesizer {
     private ctx?: AudioContext;
     private oscillators: OscillatorNode[] = [];
     private gainNode?: GainNode;
-    private timer?: any;
+    private timer?: ReturnType<typeof setTimeout>;
     private isPlaying = false;
 
     constructor() {}
 
     private initContext() {
         if (typeof window === "undefined") return;
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
             this.ctx = new AudioCtx();
         }

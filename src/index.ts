@@ -80,7 +80,7 @@ export class SipClient {
     private healthTimer?: ReturnType<typeof setInterval>;
 
     public static isVideoCall(invitation: SipInvitation): boolean {
-        const raw = invitation.raw;
+        const raw = invitation.raw as { request?: { body?: unknown } } | undefined;
         const body = raw?.request?.body;
         return typeof body === 'string' && body.includes("m=video") && !body.includes("m=video 0");
     }
@@ -422,10 +422,14 @@ export class SipClient {
             };
         }
 
-        return {
-            userAgent: (this.provider as any).getUA?.() || this.provider,
-            registerer: (this.provider as any).getRegisterer?.() || null,
-        };
+        if (this.provider instanceof JsSIPProvider) {
+            return {
+                userAgent: this.provider.getUA() ?? this.provider,
+                registerer: null,
+            };
+        }
+
+        return { userAgent: this.provider, registerer: null };
     }
 
     // ─── Reconnect / health ──────────────────────────────────────────────────
@@ -705,7 +709,7 @@ export class SipClient {
         const warnings: string[] = [];
         const secureContext = typeof window === 'undefined' ? true : window.isSecureContext;
         const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
-        const hasSpeakerSelection = typeof HTMLMediaElement !== 'undefined' && typeof (HTMLMediaElement.prototype as any).setSinkId === 'function';
+        const hasSpeakerSelection = typeof HTMLMediaElement !== 'undefined' && typeof HTMLMediaElement.prototype.setSinkId === 'function';
         let hasMicrophonePermission = false;
 
         if (!secureContext) warnings.push('WebRTC exige HTTPS ou localhost para microfone/câmera funcionar corretamente.');
