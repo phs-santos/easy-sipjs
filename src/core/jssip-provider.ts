@@ -1,6 +1,6 @@
 import JsSIP from "jssip";
 import type { DTMF_TRANSPORT } from "jssip/lib/Constants.js";
-import type { RTCSession, EndEvent, IncomingEvent, OutgoingEvent, IncomingDTMFEvent, OutgoingDTMFEvent, ReferEvent, AnswerOptions as JsSipAnswerOptions, TerminateOptions as JsSipTerminateOptions, DTMFOptions as JsSipDtmfOptions } from "jssip/lib/RTCSession.js";
+import type { RTCSession, EndEvent, IncomingEvent, OutgoingEvent, IncomingDTMFEvent, OutgoingDTMFEvent, ReferEvent, HoldEvent, AnswerOptions as JsSipAnswerOptions, TerminateOptions as JsSipTerminateOptions, DTMFOptions as JsSipDtmfOptions } from "jssip/lib/RTCSession.js";
 import type { UA, RTCSessionEvent, IncomingMessageEvent, OutgoingMessageEvent } from "jssip/lib/UA.js";
 import type { IncomingRequest } from "jssip/lib/SIPMessage.js";
 import type { Subscriber } from "jssip/lib/Subscriber.js";
@@ -59,8 +59,14 @@ export class JsSIPSession implements ISipSession {
             this.bus.emit('established');
         });
 
-        this.session.on("hold", () => { this.onHold?.(); this.bus.emit('hold'); });
-        this.session.on("unhold", () => { this.onUnhold?.(); this.bus.emit('unhold'); });
+        this.session.on("hold", (event: HoldEvent) => {
+            this.onHold?.();
+            this.bus.emit('hold', { originator: event.originator as unknown as 'local' | 'remote' | 'system' });
+        });
+        this.session.on("unhold", (event: HoldEvent) => {
+            this.onUnhold?.();
+            this.bus.emit('unhold', { originator: event.originator as unknown as 'local' | 'remote' | 'system' });
+        });
 
         this.session.on("refer", (event) => {
             this.bus.emit('refer', { referral: event, raw: event });
@@ -174,6 +180,47 @@ export class JsSIPSession implements ISipSession {
         this.session.unhold();
     }
 
+    async upgradeToVideo(): Promise<void> {
+        const pc = this.session.connection;
+        if (!pc) throw new Error("No active peer connection");
+        if (pc.getSenders().some(s => s.track?.kind === 'video')) return;
+        if (!this.session.isReadyToReOffer()) {
+            throw new Error("Session is not ready for a new offer (renegotiation already in progress, or call not established).");
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const [videoTrack] = stream.getVideoTracks();
+        if (!videoTrack) {
+            stream.getTracks().forEach(t => t.stop());
+            throw new Error("No video track available");
+        }
+
+        try {
+            pc.addTrack(videoTrack, stream);
+            // On failure JsSIP's own `renegotiate()` terminates the whole call
+            // (see RTCSession's internal `failed` handler) — that's jssip's behavior,
+            // not something layered on here.
+            await new Promise<void>((resolve, reject) => {
+                const started = this.session.renegotiate({}, () => resolve());
+                if (!started) reject(new Error("Unable to renegotiate: session not ready for a new offer."));
+            });
+        } catch (error) {
+            videoTrack.stop();
+            throw error;
+        }
+    }
+
+    async downgradeToAudio(): Promise<void> {
+        const pc = this.session.connection;
+        if (!pc) return;
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (!sender?.track) return;
+
+        sender.track.stop();
+        await sender.replaceTrack(null);
+        this.session.renegotiate();
+    }
+
     async transfer(target: string | ISipSession): Promise<void> {
         if (typeof target === "string") {
             this.session.refer(target);
@@ -190,6 +237,10 @@ export class JsSIPSession implements ISipSession {
         const tracks = pc.getSenders().map(sender => sender.track).filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio');
         if (!tracks.length) return undefined;
         return new MediaStream(tracks);
+    }
+
+    isOnHold(): { local: boolean; remote: boolean } {
+        return this.session.isOnHold();
     }
 
     async setAudioOutput(deviceId: string): Promise<void> {
@@ -474,6 +525,25 @@ export class JsSIPProvider implements ISipProvider {
             websocketConnected: this.ua?.isConnected() ?? false,
             registered: this.ua?.isRegistered() ?? false,
         };
+    }
+
+    /**
+     * JsSIP's own Transport already retries the WebSocket in the background after an
+     * unexpected disconnect (`connection_recovery_min/max_interval`, on by default).
+     * Tearing the UA down and rebuilding it here (like `unregister()` + `register()`)
+     * would race that internal recovery — both could reconnect the same credentials
+     * at once. So this just re-registers once the socket is back, and otherwise
+     * throws so the caller's own retry loop (`SipClient`) tries again later without
+     * touching the UA.
+     */
+    async reconnect(): Promise<void> {
+        if (!this.ua) throw new Error("UA not initialized.");
+        if (!this.ua.isConnected()) {
+            throw new Error("WebSocket not reconnected yet (JsSIP auto-recovery in progress).");
+        }
+        if (!this.ua.isRegistered()) {
+            this.ua.register();
+        }
     }
 
     public getUA(): UA | undefined { return this.ua; }

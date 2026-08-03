@@ -82,6 +82,8 @@ export class SipJSSession implements ISipSession {
     private _muted = false;
     private reinviteInProgress = false;
     private terminated = false;
+    private localHoldState = false;
+    private remoteHoldState = false;
     private bus = new SessionEventBus();
 
     constructor(private session: Session) {
@@ -160,8 +162,9 @@ export class SipJSSession implements ISipSession {
                 sessionDescriptionHandlerModifiers: [SipJSSession.holdSdpModifier],
             });
             this.toggleAudioTracks(false);
+            this.localHoldState = true;
             this.onHold?.();
-            this.bus.emit('hold');
+            this.bus.emit('hold', { originator: 'local' });
         } finally {
             this.reinviteInProgress = false;
         }
@@ -175,14 +178,69 @@ export class SipJSSession implements ISipSession {
                 sessionDescriptionHandlerModifiers: [],
             });
             if (!this._muted) this.toggleAudioTracks(true);
+            this.localHoldState = false;
             this.onUnhold?.();
-            this.bus.emit('unhold');
+            this.bus.emit('unhold', { originator: 'local' });
+        } finally {
+            this.reinviteInProgress = false;
+        }
+    }
+
+    async upgradeToVideo(): Promise<void> {
+        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        const pc = this.getPeerConnection();
+        if (pc?.getSenders().some(s => s.track?.kind === 'video')) return;
+
+        this.reinviteInProgress = true;
+        try {
+            // sip.js's default SessionDescriptionHandler acquires the camera itself and
+            // adds the resulting track to the peer connection when `constraints.video`
+            // flips to true on a re-INVITE — no manual getUserMedia/addTrack needed here.
+            await this.session.invite({
+                sessionDescriptionHandlerOptions: { constraints: { audio: true, video: true } },
+            });
+        } finally {
+            this.reinviteInProgress = false;
+        }
+    }
+
+    async downgradeToAudio(): Promise<void> {
+        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        const pc = this.getPeerConnection();
+        const sender = pc?.getSenders().find(s => s.track?.kind === 'video');
+        if (!sender?.track) return;
+
+        this.reinviteInProgress = true;
+        try {
+            // The default SessionDescriptionHandler only adds/replaces tracks on
+            // re-INVITE, it doesn't remove them when constraints go back to `video:
+            // false` — so the sender is stopped and cleared manually first. This stops
+            // the outgoing video; it doesn't renegotiate the video m-line to inactive.
+            sender.track.stop();
+            await sender.replaceTrack(null);
+            await this.session.invite({
+                sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+            });
         } finally {
             this.reinviteInProgress = false;
         }
     }
 
     async transfer(target: string | ISipSession): Promise<void> {
+        const onNotify = (notification: Notification) => {
+            notification.accept().catch(() => {});
+            const body = notification.request.body ?? '';
+            const match = body.match(/^SIP\/2\.0\s+(\d{3})\s*(.*)$/m);
+            if (!match) return;
+            const subscriptionState = notification.request.getHeader('Subscription-State') ?? '';
+            const statusCode = Number(match[1]);
+            this.bus.emit('transfer-progress', {
+                statusCode,
+                reasonPhrase: match[2]?.trim() || undefined,
+                final: /terminated/i.test(subscriptionState) || statusCode >= 200,
+            });
+        };
+
         if (typeof target === "string") {
             let raw = target.trim();
             if (!raw.startsWith("sip:") && !raw.startsWith("sips:")) raw = `sip:${raw}`;
@@ -194,6 +252,7 @@ export class SipJSSession implements ISipSession {
             const uri = UserAgent.makeURI(raw);
             if (!uri) throw new Error(`Invalid transfer target URI: ${raw}`);
             await this.session.refer(uri, {
+                onNotify,
                 requestDelegate: {
                     onReject: (response) => this.emitFailed({
                         statusCode: response.message.statusCode,
@@ -205,7 +264,7 @@ export class SipJSSession implements ISipSession {
         } else {
             const otherSession = (target as SipJSSession).getRawSession?.();
             if (!otherSession) throw new Error("Invalid transfer target session");
-            await this.session.refer(otherSession);
+            await this.session.refer(otherSession, { onNotify });
         }
     }
 
@@ -311,6 +370,14 @@ export class SipJSSession implements ISipSession {
         return new MediaStream(tracks);
     }
 
+    /**
+     * `remote` is best-effort: sip.js doesn't report it natively, so it's inferred
+     * from the SDP direction (`a=sendonly`/`a=inactive`) on incoming re-INVITEs.
+     */
+    isOnHold(): { local: boolean; remote: boolean } {
+        return { local: this.localHoldState, remote: this.remoteHoldState };
+    }
+
     async getStats(): Promise<CallStats> {
         const pc = this.getPeerConnection();
         if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
@@ -354,6 +421,21 @@ export class SipJSSession implements ISipSession {
         const currentDelegate = this.session.delegate ?? {};
         this.session.delegate = {
             ...currentDelegate,
+            onInvite: (request, response, statusCode) => {
+                currentDelegate.onInvite?.(request, response, statusCode);
+                const body = request.body ?? '';
+                const holding = /a=(sendonly|inactive)\r?\n/i.test(body);
+                const active = /a=(sendrecv|recvonly)\r?\n/i.test(body);
+                if (!holding && !active) return;
+                const isHold = holding && !active;
+                if (isHold === this.remoteHoldState) return;
+                this.remoteHoldState = isHold;
+                if (isHold) {
+                    this.bus.emit('hold', { originator: 'remote' });
+                } else {
+                    this.bus.emit('unhold', { originator: 'remote' });
+                }
+            },
             onInfo: (info) => {
                 currentDelegate.onInfo?.(info);
                 const contentType = info.request.getHeader('Content-Type') ?? '';

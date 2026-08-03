@@ -91,6 +91,23 @@ export interface SipReferEvent {
     raw?: unknown;
 }
 
+/**
+ * Progress of a transfer this session initiated (`transfer()`), parsed from the
+ * sipfrag NOTIFYs of the REFER's implicit subscription (RFC 3515/3891). Lets the
+ * caller know whether the transferred call actually connected, not just whether
+ * the REFER request itself was accepted.
+ *
+ * Currently only emitted by the `sipjs` provider — JsSIP doesn't surface these
+ * NOTIFYs at the session level, so this stays `unknown`-based/absent on `jssip`.
+ */
+export interface SipTransferProgressEvent {
+    /** Status code from the sipfrag body (e.g. 100, 180, 200, 486, 603). */
+    statusCode: number;
+    reasonPhrase?: string;
+    /** True once the REFER's implicit subscription is done (terminated or a final status code). */
+    final: boolean;
+}
+
 export interface SipMessageEvent {
     message: unknown;
     body?: string;
@@ -108,6 +125,12 @@ export interface SipMediaFailureEvent {
     cause?: unknown;
 }
 
+export interface SipHoldEvent {
+    /** Who initiated the hold/unhold. `'remote'` is best-effort (SDP direction sniffing)
+     *  on providers that don't report it natively — absent if it couldn't be determined. */
+    originator?: 'local' | 'remote' | 'system';
+}
+
 export interface SipSessionEventMap {
     state: [state: SipSessionStatus];
     progress: [event?: SipSessionProgressEvent];
@@ -117,11 +140,12 @@ export interface SipSessionEventMap {
     terminated: [event?: SipFailureEvent];
     failed: [event: SipFailureEvent];
     dtmf: [event: SipDtmfEvent];
-    hold: [];
-    unhold: [];
+    hold: [event?: SipHoldEvent];
+    unhold: [event?: SipHoldEvent];
     refer: [event: SipReferEvent];
     message: [event: SipMessageEvent];
     notify: [notification: unknown];
+    'transfer-progress': [event: SipTransferProgressEvent];
     'media-state': [event: SipMediaStateEvent];
     'media-failed': [event: SipMediaFailureEvent];
     quality: [snapshot: CallQualitySnapshot];

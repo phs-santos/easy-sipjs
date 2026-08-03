@@ -83,6 +83,14 @@ export interface ISipSession {
      * (que em vários headsets Bluetooth simplesmente não funciona em
      * paralelo com a captura que a própria chamada já mantém). */
     getLocalStream?(): MediaStream | undefined;
+
+    /** Current hold status, split by who initiated it. */
+    isOnHold?(): { local: boolean; remote: boolean };
+
+    /** Adds a local video track to an already-established call and renegotiates. No-op if video is already active. */
+    upgradeToVideo?(): Promise<void>;
+    /** Stops sending the local video track on an already-established call and renegotiates. No-op if there is no active video. */
+    downgradeToAudio?(): Promise<void>;
 }
 
 export interface ISipUserAgentDelegate {

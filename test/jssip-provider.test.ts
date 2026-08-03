@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { JsSIPSession, JsSIPProvider } from "../src/core/jssip-provider.js";
 
-function createFakeSession() {
+function createFakeSession(connection?: unknown) {
     return {
         id: "session-1",
         on: vi.fn(),
@@ -9,6 +9,9 @@ function createFakeSession() {
         terminate: vi.fn(),
         hold: vi.fn(),
         unhold: vi.fn(),
+        connection,
+        isReadyToReOffer: vi.fn().mockReturnValue(true),
+        renegotiate: vi.fn((_options?: unknown, done?: () => void) => { done?.(); return true; }),
     };
 }
 
@@ -103,7 +106,7 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         expect(terminated).toHaveBeenCalledTimes(1);
     });
 
-    it("emits 'hold' and 'unhold'", () => {
+    it("emits 'hold' and 'unhold' with the originator jssip reports", () => {
         const rawSession = createFakeSession();
         const session = new JsSIPSession(rawSession);
 
@@ -112,11 +115,18 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         session.on("hold", hold);
         session.on("unhold", unhold);
 
-        trigger(rawSession, "hold");
-        trigger(rawSession, "unhold");
+        trigger(rawSession, "hold", { originator: "remote" });
+        trigger(rawSession, "unhold", { originator: "local" });
 
-        expect(hold).toHaveBeenCalledTimes(1);
-        expect(unhold).toHaveBeenCalledTimes(1);
+        expect(hold).toHaveBeenCalledWith({ originator: "remote" });
+        expect(unhold).toHaveBeenCalledWith({ originator: "local" });
+    });
+
+    it("isOnHold() delegates directly to jssip's native isOnHold()", () => {
+        const rawSession = { ...createFakeSession(), isOnHold: vi.fn().mockReturnValue({ local: true, remote: false }) };
+        const session = new JsSIPSession(rawSession);
+
+        expect(session.isOnHold()).toEqual({ local: true, remote: false });
     });
 
     it("emits 'dtmf' for both incoming DTMF and sendDTMF()", async () => {
@@ -223,5 +233,69 @@ describe("JsSIPProvider.subscribePresence (parity with SipJSProvider)", () => {
         await provider.unsubscribePresence("1000");
 
         expect(subscriber.terminate).toHaveBeenCalled();
+    });
+});
+
+describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
+    it("upgradeToVideo() is a no-op if a video sender is already active", async () => {
+        const pc = { getSenders: () => [{ track: { kind: "video" } }] };
+        const rawSession = createFakeSession(pc);
+        const session = new JsSIPSession(rawSession);
+
+        await session.upgradeToVideo();
+
+        expect(rawSession.renegotiate).not.toHaveBeenCalled();
+    });
+
+    it("upgradeToVideo() throws without touching the camera if the session can't re-offer", async () => {
+        const pc = { getSenders: () => [{ track: { kind: "audio" } }] };
+        const rawSession = { ...createFakeSession(pc), isReadyToReOffer: vi.fn().mockReturnValue(false) };
+        const session = new JsSIPSession(rawSession);
+        const getUserMedia = vi.spyOn(navigator.mediaDevices, "getUserMedia");
+
+        await expect(session.upgradeToVideo()).rejects.toThrow(/not ready/i);
+        expect(getUserMedia).not.toHaveBeenCalled();
+    });
+
+    it("upgradeToVideo() adds the camera track to the peer connection and renegotiates", async () => {
+        const addTrack = vi.fn();
+        const pc = { getSenders: () => [{ track: { kind: "audio" } }], addTrack };
+        const rawSession = createFakeSession(pc);
+        const session = new JsSIPSession(rawSession);
+
+        const videoTrack = { kind: "video", stop: vi.fn() };
+        vi.spyOn(navigator.mediaDevices, "getUserMedia").mockResolvedValue({
+            getVideoTracks: () => [videoTrack],
+            getTracks: () => [videoTrack],
+        } as any);
+
+        await session.upgradeToVideo();
+
+        expect(addTrack).toHaveBeenCalledWith(videoTrack, expect.anything());
+        expect(rawSession.renegotiate).toHaveBeenCalled();
+    });
+
+    it("downgradeToAudio() is a no-op if there is no active video sender", async () => {
+        const pc = { getSenders: () => [{ track: { kind: "audio" } }] };
+        const rawSession = createFakeSession(pc);
+        const session = new JsSIPSession(rawSession);
+
+        await session.downgradeToAudio();
+
+        expect(rawSession.renegotiate).not.toHaveBeenCalled();
+    });
+
+    it("downgradeToAudio() stops and clears the video sender's track, then renegotiates", async () => {
+        const videoTrack = { kind: "video", stop: vi.fn() };
+        const replaceTrack = vi.fn().mockResolvedValue(undefined);
+        const pc = { getSenders: () => [{ track: videoTrack, replaceTrack }] };
+        const rawSession = createFakeSession(pc);
+        const session = new JsSIPSession(rawSession);
+
+        await session.downgradeToAudio();
+
+        expect(videoTrack.stop).toHaveBeenCalled();
+        expect(replaceTrack).toHaveBeenCalledWith(null);
+        expect(rawSession.renegotiate).toHaveBeenCalled();
     });
 });
