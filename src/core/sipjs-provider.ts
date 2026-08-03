@@ -208,19 +208,27 @@ export class SipJSSession implements ISipSession {
         if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
         const pc = this.getPeerConnection();
         const sender = pc?.getSenders().find(s => s.track?.kind === 'video');
-        if (!sender?.track) return;
+        const track = sender?.track;
+        if (!sender || !track) return;
 
         this.reinviteInProgress = true;
         try {
             // The default SessionDescriptionHandler only adds/replaces tracks on
             // re-INVITE, it doesn't remove them when constraints go back to `video:
-            // false` — so the sender is stopped and cleared manually first. This stops
-            // the outgoing video; it doesn't renegotiate the video m-line to inactive.
-            sender.track.stop();
+            // false` — so the sender is cleared manually first. This stops the
+            // outgoing video; it doesn't renegotiate the video m-line to inactive.
+            // The track itself is only stopped after the re-INVITE succeeds, so a
+            // failed renegotiation can restore it instead of leaving it unusable.
             await sender.replaceTrack(null);
-            await this.session.invite({
-                sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
-            });
+            try {
+                await this.session.invite({
+                    sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+                });
+                track.stop();
+            } catch (error) {
+                await sender.replaceTrack(track).catch(() => {});
+                throw error;
+            }
         } finally {
             this.reinviteInProgress = false;
         }
@@ -290,7 +298,12 @@ export class SipJSSession implements ISipSession {
             throw new Error("No audio track found for selected input device");
         }
 
-        await sender.replaceTrack(newTrack);
+        try {
+            await sender.replaceTrack(newTrack);
+        } catch (error) {
+            newTrack.stop();
+            throw error;
+        }
         previousTrack?.stop();
     }
 
@@ -556,6 +569,11 @@ export class SipJSSession implements ISipSession {
         if (this.remoteElement) {
             try { this.remoteElement.pause(); } catch (_) {}
             this.remoteElement.srcObject = null;
+        }
+        if (this.audioCtx) {
+            this.audioCtx.close().catch(() => {});
+            this.audioCtx = undefined;
+            this.gainNode = undefined;
         }
     }
 

@@ -12,7 +12,7 @@ export class SipAudioSynthesizer {
     constructor() {}
 
     private initContext() {
-        if (typeof window === "undefined") return;
+        if (this.ctx || typeof window === "undefined") return;
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
             this.ctx = new AudioCtx();
@@ -123,6 +123,10 @@ export class SipAudioSynthesizer {
             this.timer = undefined;
         }
         this.stopOscillators();
+        if (this.ctx) {
+            this.ctx.close().catch(() => {});
+            this.ctx = undefined;
+        }
     }
 
     private stopOscillators() {

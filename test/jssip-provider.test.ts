@@ -93,6 +93,19 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         expect(terminated).toHaveBeenCalledTimes(1);
     });
 
+    it("only calls the legacy onTerminate callback once, even though bye() and the session's own 'ended' event both fire", async () => {
+        const rawSession = createFakeSession();
+        const session = new JsSIPSession(rawSession);
+
+        const onTerminate = vi.fn();
+        session.onTerminate = onTerminate;
+
+        rawSession.terminate.mockImplementation(() => trigger(rawSession, "ended", { originator: "local", cause: "Terminated" }));
+        await session.bye();
+
+        expect(onTerminate).toHaveBeenCalledTimes(1);
+    });
+
     it("only emits 'terminated' once even if bye() and the session's own 'ended' event both fire", async () => {
         const rawSession = createFakeSession();
         const session = new JsSIPSession(rawSession);

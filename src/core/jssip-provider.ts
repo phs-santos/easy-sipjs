@@ -97,7 +97,6 @@ export class JsSIPSession implements ISipSession {
 
         this.session.on("ended", (event: EndEvent) => {
             this.cleanupAudio();
-            this.onTerminate?.();
             this.emitTerminatedOnce({
                 reasonPhrase: event.cause,
                 cause: event,
@@ -111,7 +110,6 @@ export class JsSIPSession implements ISipSession {
             if (event.originator !== "local") {
                 this.onReject?.(statusCode ?? 0);
             }
-            this.onTerminate?.();
             this.bus.emit('failed', {
                 statusCode,
                 reasonPhrase: event.cause,
@@ -162,7 +160,6 @@ export class JsSIPSession implements ISipSession {
             this.session.terminate();
         } finally {
             this.cleanupAudio();
-            this.onTerminate?.();
             this.emitTerminatedOnce();
         }
     }
@@ -218,7 +215,10 @@ export class JsSIPSession implements ISipSession {
 
         sender.track.stop();
         await sender.replaceTrack(null);
-        this.session.renegotiate();
+        await new Promise<void>((resolve, reject) => {
+            const started = this.session.renegotiate({}, () => resolve());
+            if (!started) reject(new Error("Unable to renegotiate: session not ready for a new offer."));
+        });
     }
 
     async transfer(target: string | ISipSession): Promise<void> {
@@ -259,7 +259,12 @@ export class JsSIPSession implements ISipSession {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
         const [newTrack] = stream.getAudioTracks();
         if (!newTrack) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); return; }
-        await sender.replaceTrack(newTrack);
+        try {
+            await sender.replaceTrack(newTrack);
+        } catch (error) {
+            newTrack.stop();
+            throw error;
+        }
         previousTrack?.stop();
     }
 
@@ -331,11 +336,17 @@ export class JsSIPSession implements ISipSession {
             try { this.remoteElement.pause(); } catch (_) {}
             this.remoteElement.srcObject = null;
         }
+        if (this.audioCtx) {
+            this.audioCtx.close().catch(() => {});
+            this.audioCtx = undefined;
+            this.gainNode = undefined;
+        }
     }
 
     private emitTerminatedOnce(event?: SipFailureEvent): void {
         if (this.terminated) return;
         this.terminated = true;
+        this.onTerminate?.();
         this.bus.emit('state', 'terminated');
         this.bus.emit('terminated', event);
     }

@@ -610,6 +610,14 @@ export class SipClient {
             removeSession();
             this.emitter.emit('session-terminated', session, event);
         });
+        session.on?.('hold', event => this.emitter.emit('session-hold', session, event));
+        session.on?.('unhold', event => this.emitter.emit('session-unhold', session, event));
+        session.on?.('dtmf', event => this.emitter.emit('session-dtmf', session, event));
+        session.on?.('refer', event => this.emitter.emit('session-refer', session, event));
+        session.on?.('transfer-progress', event => this.emitter.emit('session-transfer-progress', session, event));
+        session.on?.('media-state', event => this.emitter.emit('session-media-state', session, event));
+        session.on?.('media-failed', event => this.emitter.emit('session-media-failed', session, event));
+        session.on?.('quality', snapshot => this.emitter.emit('session-quality', session, snapshot));
 
         let userOnTerminate = session.onTerminate;
         const internalCleanup = () => {
@@ -669,6 +677,10 @@ export class SipClient {
 
     async hold(): Promise<void> { await this.activeSession?.hold(); }
     async unhold(): Promise<void> { await this.activeSession?.unhold(); }
+    isOnHold(): { local: boolean; remote: boolean } { return this.activeSession?.isOnHold?.() ?? { local: false, remote: false }; }
+
+    async upgradeToVideo(): Promise<void> { await this.activeSession?.upgradeToVideo?.(); }
+    async downgradeToAudio(): Promise<void> { await this.activeSession?.downgradeToAudio?.(); }
 
     async transfer(target: string | ISipSession): Promise<void> {
         await this.activeSession?.transfer(target);

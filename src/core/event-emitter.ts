@@ -21,6 +21,14 @@ export type SipEventMap = {
     'session-established': [session: ISipSession];
     'session-terminated': [session: ISipSession, event?: SipSessionEventMap['terminated'][0]];
     'session-failed': [session: ISipSession, event: SipSessionEventMap['failed'][0]];
+    'session-hold': [session: ISipSession, event?: SipSessionEventMap['hold'][0]];
+    'session-unhold': [session: ISipSession, event?: SipSessionEventMap['unhold'][0]];
+    'session-dtmf': [session: ISipSession, event: SipSessionEventMap['dtmf'][0]];
+    'session-refer': [session: ISipSession, event: SipSessionEventMap['refer'][0]];
+    'session-transfer-progress': [session: ISipSession, event: SipSessionEventMap['transfer-progress'][0]];
+    'session-media-state': [session: ISipSession, event: SipSessionEventMap['media-state'][0]];
+    'session-media-failed': [session: ISipSession, event: SipSessionEventMap['media-failed'][0]];
+    'session-quality': [session: ISipSession, snapshot: SipSessionEventMap['quality'][0]];
     'connection-state': [state: SipConnectionState];
 };
 
