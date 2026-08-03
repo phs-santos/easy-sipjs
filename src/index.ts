@@ -417,8 +417,8 @@ export class SipClient {
     private getRegisterResult(): SipRegisterResult {
         if (this.provider instanceof SipJSProvider) {
             return {
-                userAgent: this.provider.getUserAgent()!,
-                registerer: this.provider.getRegisterer()!,
+                userAgent: this.provider.getUserAgent(),
+                registerer: this.provider.getRegisterer(),
             };
         }
 

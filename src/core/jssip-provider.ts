@@ -1,6 +1,7 @@
 import JsSIP from "jssip";
+import type { DTMF_TRANSPORT } from "jssip/lib/Constants.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot } from "./types.js";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot, DtmfOptions } from "./types.js";
 import { assignStream } from "./media.js";
 import { ensureSipPrefix, parseRTCStats } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
@@ -159,8 +160,12 @@ export class JsSIPSession implements ISipSession {
         }
     }
 
-    async sendDTMF(tone: string): Promise<void> {
-        this.session.sendDTMF(tone);
+    async sendDTMF(tone: string, options: DtmfOptions = {}): Promise<void> {
+        const dtmfOptions: { duration?: number; transportType?: DTMF_TRANSPORT } = {};
+        if (options.durationMs !== undefined) dtmfOptions.duration = options.durationMs;
+        if (options.mode === 'sip-info') dtmfOptions.transportType = JsSIP.C.DTMF_TRANSPORT.INFO;
+        else if (options.mode === 'rtp-event') dtmfOptions.transportType = JsSIP.C.DTMF_TRANSPORT.RFC2833;
+        this.session.sendDTMF(tone, dtmfOptions);
     }
 
     async shareScreen(): Promise<void> {

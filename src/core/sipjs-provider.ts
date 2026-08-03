@@ -219,7 +219,8 @@ export class SipJSSession implements ISipSession {
             let raw = target.trim();
             if (!raw.startsWith("sip:") && !raw.startsWith("sips:")) raw = `sip:${raw}`;
             if (!raw.includes("@")) {
-                const domain = this.session.remoteIdentity?.uri?.host ?? "";
+                const domain = this.session.remoteIdentity?.uri?.host;
+                if (!domain) throw new Error(`Cannot resolve domain for transfer target: ${raw}`);
                 raw = `${raw}@${domain}`;
             }
             const uri = UserAgent.makeURI(raw);
@@ -332,6 +333,14 @@ export class SipJSSession implements ISipSession {
         this.screenTrack?.stop();
         this.screenTrack = undefined;
         this.originalVideoTrack = undefined;
+    }
+
+    getLocalStream(): MediaStream | undefined {
+        const pc = this.getPeerConnection();
+        if (!pc) return undefined;
+        const tracks = pc.getSenders().map(sender => sender.track).filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio');
+        if (!tracks.length) return undefined;
+        return new MediaStream(tracks);
     }
 
     async getStats(): Promise<CallStats> {
