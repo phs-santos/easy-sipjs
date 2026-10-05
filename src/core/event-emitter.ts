@@ -49,6 +49,8 @@ export class SipEventEmitter {
     off<K extends keyof SipEventMap>(event: K, listener: Listener<SipEventMap[K]>): this {
         const arr = this.listeners[event] as Listener<SipEventMap[K]>[] | undefined;
         if (arr) {
+            // TS can't verify a homomorphic mapped-type assignment through a generic index `K`.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             this.listeners[event] = arr.filter(l => l !== listener) as any;
         }
         return this;

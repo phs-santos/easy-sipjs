@@ -1,16 +1,34 @@
 export type SoftphonePreset = 'asterisk' | 'kamailio' | 'generic';
+/**
+ * How a local hold is signalled on the `sipjs` provider (JsSIP has its own):
+ * - `asterisk-inactive`: every media line becomes `a=inactive`. Stable on Asterisk paths
+ *   that mirror direction attributes in the re-INVITE answer.
+ * - `asterisk-sendonly`: `a=sendonly`, the textbook RFC 3264 hold.
+ * - `sipjs-default`: sip.js's own hold, which sets the transceiver directions.
+ */
 export type HoldStrategy = 'sipjs-default' | 'asterisk-inactive' | 'asterisk-sendonly';
 
 export interface MediaRecoveryOptions {
-    /** Defaults to true for the asterisk/kamailio presets. */
+    /** Defaults to true. When false, a broken media path is only reported (`media-failed`). */
     enabled?: boolean;
-    /** Calls RTCPeerConnection.restartIce() when ICE enters `failed`. */
+    /** Defaults to true. Restarts ICE before the recovery re-INVITE. */
     restartIceOnFailure?: boolean;
-    /** Defaults to 2. */
+    /** Recovery attempts per outage. Defaults to 2. */
     maxAttempts?: number;
+    /** How long ICE may stay `disconnected` before recovery starts, without waiting for the
+     *  browser to declare it `failed` (15–30s). Defaults to 3000ms. */
+    disconnectedGraceMs?: number;
 }
 
-export interface SipCredentials {
+/** Per-session behaviour. Left unset, each comes from the client's `preset`. */
+export interface SipSessionDefaults {
+    /** DTMF mode used when `sendDTMF()` is called without one. */
+    dtmfMode?: DtmfMode;
+    holdStrategy?: HoldStrategy;
+    mediaRecovery?: MediaRecoveryOptions;
+}
+
+export interface SipCredentials extends SipSessionDefaults {
     domain: string;
     phone: string;
     secret: string;
@@ -29,6 +47,13 @@ export interface SipCredentials {
     /** Extra parameters for the Contact URI (`sipjs` provider). Defaults to `{ transport: 'ws' }`,
      *  which is what registrars echo back for WebSocket clients. */
     contactParams?: { [name: string]: string };
+    /**
+     * `sipjs` provider. By default the Contact is the extension's own address
+     * (`sip:extension@domain`), so every tab or device registered on the same extension
+     * shares one binding. `true` lets sip.js generate a unique Contact per instance, so
+     * several can stay registered side by side (the PBX must allow more than one contact).
+     */
+    uniqueContact?: boolean;
     debug?: boolean;
 }
 
@@ -70,7 +95,7 @@ export type SipSessionStatus =
 export type DtmfMode = 'sip-info' | 'rtp-event' | 'auto';
 
 export interface DtmfOptions {
-    /** Defaults to the selected preset. Asterisk/Kamailio use `sip-info`; generic uses `auto`. */
+    /** Defaults to the client's `dtmfMode`, which comes from the preset: Asterisk/Kamailio use `sip-info`; generic uses `auto`. */
     mode?: DtmfMode;
     /** Defaults to 160ms. */
     durationMs?: number;

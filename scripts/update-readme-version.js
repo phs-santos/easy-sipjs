@@ -14,7 +14,7 @@ try {
     let readmeContent = fs.readFileSync(readmePath, 'utf8');
 
     // Regex to match # easy-sipjs (v1.2.0)
-    const versionRegex = /(# easy-sipjs \(v)([\d\.]+)(\))/;
+    const versionRegex = /(# easy-sipjs \(v)([\d.]+)(\))/;
 
     if (versionRegex.test(readmeContent)) {
         const updatedReadme = readmeContent.replace(versionRegex, `$1${version}$3`);

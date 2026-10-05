@@ -170,6 +170,50 @@ const session = await client.dial('4002', { remoteElement: audio, earlyMedia: tr
 
 ---
 
+## Presets e padrões de sessão
+
+```ts
+const client = new SipClient(credentials, {
+  preset: 'generic',            // 'asterisk' (padrão), 'kamailio' ou 'generic'
+  dtmfMode: 'rtp-event',        // sobrepõe o preset
+  holdStrategy: 'asterisk-sendonly',
+  mediaRecovery: { maxAttempts: 3, disconnectedGraceMs: 2000 },
+});
+```
+
+| Preset | DTMF padrão | Espera (hold) |
+| --- | --- | --- |
+| `asterisk`, `kamailio` | `sip-info` | `a=inactive` (`asterisk-inactive`) |
+| `generic` | `auto` (RTP, depois INFO) | a do SIP.js (`sipjs-default`) |
+
+- `mediaRecovery`: quando o ICE fica `disconnected` por mais de 3 s, ou `failed`, a sessão reinicia o ICE com um re-INVITE. Depois que o WebSocket reconecta, as chamadas em andamento fazem o mesmo.
+- `uniqueContact: true` nas credenciais faz o SIP.js gerar um Contact único por instância, para várias abas ou aparelhos no mesmo ramal ficarem registrados juntos (o PBX precisa permitir mais de um contato).
+- SIP MESSAGE recebido é respondido com 200 OK pela biblioteca; o app só lê o conteúdo.
+
+---
+
+## Erros e logs
+
+```ts
+import { SipError, SipLogCode } from 'easy-sipjs';
+
+try {
+  await client.connect();
+} catch (error) {
+  if (error instanceof SipError && error.code === 'register-rejected') {
+    console.log(error.statusCode, error.reasonPhrase); // 403 Forbidden
+  }
+}
+
+client.onSipLog = (level, category, label, content) => {
+  if (label === SipLogCode.ReconnectExhausted) avisarUsuario();
+};
+```
+
+Os erros da biblioteca são `SipError` com um `code` estável (`register-rejected`, `register-timeout`, `reinvite-rejected`, `reinvite-in-progress`, `not-initialized`, `invalid-uri`, `transport-not-ready`, `unsupported`). As linhas de log do próprio cliente levam um código no `label`; o texto é para pessoas e pode mudar.
+
+---
+
 ## Reconexão
 
 ```ts

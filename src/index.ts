@@ -19,10 +19,23 @@ import { SipAudioSynthesizer } from "./core/audio-synthesizer.js";
 import { SipEventEmitter, SipEventMap } from "./core/event-emitter.js";
 import { DeviceManager } from "./core/device-manager.js";
 import { redactSipLog } from "./core/logger.js";
+import { SipError, SipLogCode } from "./core/errors.js";
+import type { DtmfMode, HoldStrategy, MediaRecoveryOptions, SipSessionDefaults } from "./core/types.js";
 
 export interface SipClientOptions {
-    /** Use a preset so app developers do not need to know SIP.js internals. */
+    /**
+     * Picks the session defaults that suit a kind of server, so app developers do not need
+     * to know SIP internals: `asterisk` and `kamailio` send DTMF as SIP INFO and hold with
+     * `a=inactive`; `generic` lets DTMF fall back automatically (RTP, then INFO) and uses the
+     * standard hold. Without a preset the client behaves like `asterisk`.
+     */
     preset?: SoftphonePreset;
+    /** Overrides the preset's DTMF mode for `sendDTMF()` calls that don't name one. */
+    dtmfMode?: DtmfMode;
+    /** Overrides the preset's hold signalling (`sipjs` provider). */
+    holdStrategy?: HoldStrategy;
+    /** Overrides how a broken media path is recovered mid-call. */
+    mediaRecovery?: MediaRecoveryOptions;
     /** Defaults to `sipjs`. The SIP stack is loaded on demand, so only the chosen one ends up in the app's bundle. */
     provider?: 'sipjs' | 'jssip';
     customProvider?: ISipProvider;
@@ -47,6 +60,12 @@ export interface SipClientOptions {
      */
     healthCheckIntervalMs?: number;
 }
+
+const PRESET_DEFAULTS: Record<SoftphonePreset, Required<Pick<SipSessionDefaults, 'dtmfMode' | 'holdStrategy'>>> = {
+    asterisk: { dtmfMode: 'sip-info', holdStrategy: 'asterisk-inactive' },
+    kamailio: { dtmfMode: 'sip-info', holdStrategy: 'asterisk-inactive' },
+    generic: { dtmfMode: 'auto', holdStrategy: 'sipjs-default' },
+};
 
 const FIRST_RECONNECT_DELAY_MS = 500;
 const PING_FAILURES_BEFORE_RECONNECT = 2;
@@ -164,6 +183,17 @@ export class SipClient {
         return this.provider ?? this.providerReady;
     }
 
+    /** Explicit client option, then whatever came with the credentials, then the preset. */
+    private providerCredentials(): SipCredentials {
+        const preset = PRESET_DEFAULTS[this.options.preset ?? 'asterisk'];
+        return {
+            ...this.credentials,
+            dtmfMode: this.options.dtmfMode ?? this.credentials.dtmfMode ?? preset.dtmfMode,
+            holdStrategy: this.options.holdStrategy ?? this.credentials.holdStrategy ?? preset.holdStrategy,
+            mediaRecovery: this.options.mediaRecovery ?? this.credentials.mediaRecovery,
+        };
+    }
+
     // ─── Friendly aliases ────────────────────────────────────────────────────
 
     async connect(): Promise<SipRegisterResult> { return this.register(); }
@@ -230,7 +260,7 @@ export class SipClient {
 
         // Being back online is new information: retry right away, even if the previous
         // outage had already used up every attempt.
-        this.onSipLog?.("info", "sip.Client", "", "Conectividade de rede restaurada. Tentando reconectar...");
+        this.onSipLog?.("info", "sip.Client", SipLogCode.NetworkOnline, "Conectividade de rede restaurada. Tentando reconectar...");
         this.reconnectAttempt = 0;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
@@ -326,7 +356,7 @@ export class SipClient {
                 this.emitter.emit('disconnect', error);
                 // While a reconnect attempt is running it owns the retry (it may be the one dropping the socket).
                 if (!this.intentionalDisconnect && this.autoReconnect && !this.reconnecting) {
-                    this.onSipLog?.("warn", "sip.Client", "", "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
+                    this.onSipLog?.("warn", "sip.Client", SipLogCode.TransportDisconnected, "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
                     this.triggerReconnection();
                 }
             },
@@ -394,7 +424,7 @@ export class SipClient {
                 if (this.autoReconnect && !this.reconnecting) {
                     // The binding lapsed on a socket that still looks connected, which usually
                     // means the socket is dead: replace it instead of registering over it.
-                    this.onSipLog?.("warn", "sip.Client", "", "Registro SIP perdido. Iniciando tentativas de reconexão...");
+                    this.onSipLog?.("warn", "sip.Client", SipLogCode.RegistrationLost, "Registro SIP perdido. Iniciando tentativas de reconexão...");
                     this.triggerReconnection(true);
                 }
             },
@@ -402,7 +432,7 @@ export class SipClient {
 
         try {
             await provider.register(
-                this.credentials,
+                this.providerCredentials(),
                 internalUserAgentDelegate,
                 internalRegisterDelegate,
                 this.handleSipLog
@@ -430,7 +460,7 @@ export class SipClient {
         this.emitter.emit('registered');
         if (wasRegistered) return;
         this.restorePresenceSubscriptions().catch(error => {
-            this.onSipLog?.('warn', 'sip.Client', '', `Falha ao restaurar inscrições de presença: ${error}`);
+            this.onSipLog?.('warn', 'sip.Client', SipLogCode.PresenceRestoreFailed, `Falha ao restaurar inscrições de presença: ${error}`);
         });
     }
 
@@ -480,7 +510,7 @@ export class SipClient {
 
             if (this.autoRefreshRegistration && !this.intentionalDisconnect) {
                 this.refreshRegistration().catch(error => {
-                    this.onSipLog?.("error", "sip.Client", "", `Falha ao renovar registro SIP: ${error}`);
+                    this.onSipLog?.("error", "sip.Client", SipLogCode.RegistrationRefreshFailed, `Falha ao renovar registro SIP: ${error}`);
                     if (this.autoReconnect) this.triggerReconnection();
                 });
             }
@@ -516,6 +546,11 @@ export class SipClient {
             // register delegate have already moved the state by now.
             await provider.reconnect({ force });
             if (this.connectionState !== 'registered') this.handleRegistered();
+            // The signaling path is back; calls that lost their media path while it was
+            // down (e.g. the device changed networks) can renegotiate now.
+            for (const session of this.sessions) {
+                session.recoverMedia?.().catch(() => undefined);
+            }
         } catch (error) {
             const websocketUp = provider.getHealth?.().websocketConnected ?? false;
             this.setConnectionState(websocketUp ? 'connected' : 'disconnected');
@@ -568,7 +603,7 @@ export class SipClient {
         if (this.pingFailures < PING_FAILURES_BEFORE_RECONNECT) return;
         this.pingFailures = 0;
         if (!this.started || this.intentionalDisconnect || !this.autoReconnect) return;
-        this.onSipLog?.("warn", "sip.Client", "", "PBX não responde ao ping SIP. Refazendo a conexão...");
+        this.onSipLog?.("warn", "sip.Client", SipLogCode.HealthPingFailed, "PBX não responde ao ping SIP. Refazendo a conexão...");
         this.triggerReconnection(true);
     }
 
@@ -587,7 +622,7 @@ export class SipClient {
         if (force) this.forceNextReconnect = true;
         if (this.reconnectTimer || this.reconnecting || !this.autoReconnect || this.intentionalDisconnect) return;
         if (this.reconnectAttempt >= this.maxReconnectAttempts) {
-            this.onSipLog?.("error", "sip.Client", "", `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`);
+            this.onSipLog?.("error", "sip.Client", SipLogCode.ReconnectExhausted, `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`);
             this.emitter.emit('reconnect-failed', this.reconnectAttempt);
             return;
         }
@@ -599,11 +634,11 @@ export class SipClient {
             this.reconnectTimer = undefined;
             if (this.intentionalDisconnect) return;
             this.reconnectAttempt = nextAttempt;
-            this.onSipLog?.("info", "sip.Client", "", `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
+            this.onSipLog?.("info", "sip.Client", SipLogCode.ReconnectAttempt, `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
             try {
                 await this.enqueue(() => this.doReconnect());
             } catch (error) {
-                this.onSipLog?.("error", "sip.Client", "", `Falha na tentativa de reconexão: ${error}`);
+                this.onSipLog?.("error", "sip.Client", SipLogCode.ReconnectAttemptFailed, `Falha na tentativa de reconexão: ${error}`);
                 this.triggerReconnection();
             }
         }, delay);
@@ -614,7 +649,7 @@ export class SipClient {
     async subscribePresence(target: string, options?: PresenceSubscribeOptions): Promise<void> {
         const provider = await this.getProvider();
         if (!provider.subscribePresence) {
-            throw new Error("Presence subscription is not supported by the selected SIP provider.");
+            throw new SipError('unsupported', "Presence subscription is not supported by the selected SIP provider.");
         }
         this.presenceSubscriptions.set(target, options);
         await provider.subscribePresence(target, options);
@@ -908,6 +943,8 @@ export * from "./core/event-emitter.js";
 export * from "./core/device-manager.js";
 export * from "./core/call-quality.js";
 export * from "./core/logger.js";
+export * from "./core/errors.js";
+export { CallStatsSampler } from "./core/utils.js";
 
 export function createSoftphone(config: CreateSoftphoneConfig): SipClient {
     const preset = config.preset ?? 'asterisk';

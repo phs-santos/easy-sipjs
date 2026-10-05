@@ -16,6 +16,19 @@ export function useSipClient(credentials: SipCredentials, options: UseSipClientO
   const sessions = shallowRef<ISipSession[]>([]);
   // `client.activeSession` isn't reactive by itself; reading `sessions` ties it to every refresh.
   const activeSession = computed(() => (sessions.value, client.value.activeSession));
+  // Mute and hold of the active session. Bumped by the session's own events, so they
+  // also follow a hold started by the other side.
+  const callStateVersion = ref(0);
+  const mutedSessions = new WeakSet<ISipSession>();
+  const isMuted = computed(() => {
+    void callStateVersion.value;
+    const session = activeSession.value;
+    return !!session && mutedSessions.has(session);
+  });
+  const isOnHold = computed(() => {
+    void callStateVersion.value;
+    return activeSession.value?.isOnHold?.() ?? { local: false, remote: false };
+  });
 
   const refreshSessions = () => {
     sessions.value = client.value.getSessions();
@@ -38,6 +51,8 @@ export function useSipClient(credentials: SipCredentials, options: UseSipClientO
 
     nextClient.on("session", () => refreshSessions());
     nextClient.on("session-terminated", () => refreshSessions());
+    nextClient.on("session-hold", () => { callStateVersion.value += 1; });
+    nextClient.on("session-unhold", () => { callStateVersion.value += 1; });
   };
 
   bindClient(client.value);
@@ -72,6 +87,29 @@ export function useSipClient(credentials: SipCredentials, options: UseSipClientO
     incomingInvitation.value = undefined;
   };
 
+  const setMuted = (muted: boolean, session = activeSession.value) => {
+    if (!session) return;
+    if (muted) {
+      session.mute();
+      mutedSessions.add(session);
+    } else {
+      session.unmute();
+      mutedSessions.delete(session);
+    }
+    callStateVersion.value += 1;
+  };
+
+  const setHeld = async (held: boolean, session = activeSession.value) => {
+    if (!session) return;
+    await (held ? session.hold() : session.unhold());
+    callStateVersion.value += 1;
+  };
+
+  const hangup = async (session = activeSession.value) => {
+    await session?.bye();
+    refreshSessions();
+  };
+
   const setActiveSession = (sessionOrId: ISipSession | string | undefined) => {
     client.value.setActiveSession(sessionOrId);
     refreshSessions();
@@ -95,11 +133,16 @@ export function useSipClient(credentials: SipCredentials, options: UseSipClientO
     incomingInvitation,
     sessions,
     activeSession,
+    isMuted,
+    isOnHold,
     connect,
     disconnect,
     dial,
     answer,
     reject,
+    hangup,
+    setMuted,
+    setHeld,
     setActiveSession,
     refreshSessions,
   };

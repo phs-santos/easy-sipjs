@@ -279,7 +279,7 @@ describe("JsSIPSession ICE gathering timeout", () => {
         vi.useFakeTimers();
         try {
             const rawSession = createFakeSession();
-            new JsSIPSession(rawSession, 800);
+            new JsSIPSession(rawSession, { iceGatheringTimeoutMs: 800 });
             const ready = vi.fn();
 
             trigger(rawSession, "icecandidate", { ready });

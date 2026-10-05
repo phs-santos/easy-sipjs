@@ -35,7 +35,9 @@ import {
     SipHealthStatus,
     SipSessionProgressEvent,
     SipRegisterResult,
+    SipSessionDefaults,
 } from "./types.js";
+import { SipError } from "./errors.js";
 import { assignStream, releaseElement, setElementSink, setElementVolume } from "./media.js";
 import { CallStatsSampler, emptyCallStats, ensureSipPrefix } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
@@ -48,13 +50,26 @@ const REGISTER_TIMEOUT_MS = 40000;
 const FORCED_DISCONNECT_TIMEOUT_MS = 2000;
 const textEncoder = new TextEncoder();
 
-function registerError(response: Core.IncomingResponse): Error {
+const DEFAULT_MEDIA_RECOVERY_ATTEMPTS = 2;
+const DEFAULT_DISCONNECTED_GRACE_MS = 3000;
+
+function registerError(response: Core.IncomingResponse): SipError {
     const { statusCode, reasonPhrase } = response.message;
-    return Object.assign(new Error(`REGISTER rejected with SIP ${statusCode ?? 'error'}${reasonPhrase ? ` ${reasonPhrase}` : ''}.`), {
-        statusCode,
-        reasonPhrase,
-        response,
-    });
+    return new SipError(
+        'register-rejected',
+        `REGISTER rejected with SIP ${statusCode ?? 'error'}${reasonPhrase ? ` ${reasonPhrase}` : ''}.`,
+        { statusCode, reasonPhrase, response },
+    );
+}
+
+/**
+ * The app decides what to do with a message, not whether the sender gets an answer:
+ * reply 200 OK right away, and leave `accept()` as a harmless no-op for apps that
+ * still call it (a second real accept would throw).
+ */
+function acknowledgeMessage(message: { accept(): Promise<void> }): void {
+    message.accept().catch(() => {});
+    message.accept = () => Promise.resolve();
 }
 
 function toSessionStatus(state: SessionState): SipSessionStatus {
@@ -104,8 +119,12 @@ export class SipJSSession implements ISipSession {
     private remoteHoldState = false;
     private bus = new SessionEventBus();
     private stats = new CallStatsSampler();
+    private recoveryBoundTo?: RTCPeerConnection;
+    private recoveryAttempts = 0;
+    private recoveryTimer?: ReturnType<typeof setTimeout>;
+    private recovering = false;
 
-    constructor(private session: Session) {
+    constructor(private session: Session, private settings: SipSessionDefaults = {}) {
         this.id = session.id;
         this.bindStateChanges();
         this.bindSessionDelegate();
@@ -185,9 +204,7 @@ export class SipJSSession implements ISipSession {
         this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
-            await this.reinvite({
-                sessionDescriptionHandlerModifiers: [SipJSSession.holdSdpModifier],
-            });
+            await this.reinvite(this.holdOptions(true));
             this.toggleAudioTracks(false);
             this.localHoldState = true;
             this.onHold?.();
@@ -202,9 +219,7 @@ export class SipJSSession implements ISipSession {
         this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
-            await this.reinvite({
-                sessionDescriptionHandlerModifiers: [],
-            });
+            await this.reinvite(this.holdOptions(false));
             if (!this._muted) this.toggleAudioTracks(true);
             this.localHoldState = false;
             this.onUnhold?.();
@@ -288,7 +303,7 @@ export class SipJSSession implements ISipSession {
                 raw = `${raw}@${domain}`;
             }
             const uri = UserAgent.makeURI(raw);
-            if (!uri) throw new Error(`Invalid transfer target URI: ${raw}`);
+            if (!uri) throw new SipError('invalid-uri', `Invalid transfer target URI: ${raw}`);
             await this.session.refer(uri, {
                 onNotify,
                 requestDelegate: {
@@ -342,7 +357,7 @@ export class SipJSSession implements ISipSession {
     }
 
     async sendDTMF(tone: string, options: DtmfOptions = {}): Promise<void> {
-        const mode = options.mode ?? 'sip-info';
+        const mode = options.mode ?? this.settings.dtmfMode ?? 'sip-info';
         const durationMs = options.durationMs ?? 160;
 
         if (mode === 'rtp-event') {
@@ -467,7 +482,30 @@ export class SipJSSession implements ISipSession {
     }
 
     private assertNoReinviteInProgress(): void {
-        if (this.reinviteInProgress) throw new Error("Another re-INVITE is still in progress on this session.");
+        if (this.reinviteInProgress) {
+            throw new SipError('reinvite-in-progress', "Another re-INVITE is still in progress on this session.");
+        }
+    }
+
+    private holdOptions(hold: boolean): SessionInviteOptions {
+        const strategy = this.settings.holdStrategy ?? 'asterisk-inactive';
+        if (strategy === 'sipjs-default') {
+            // sip.js keeps these options for later re-INVITEs, so the flag has to be
+            // written back as false on unhold rather than just left out.
+            return {
+                sessionDescriptionHandlerOptions: {
+                    ...this.session.sessionDescriptionHandlerOptionsReInvite,
+                    hold,
+                } as Web.SessionDescriptionHandlerOptions,
+                sessionDescriptionHandlerModifiers: [],
+            };
+        }
+        if (!hold) return { sessionDescriptionHandlerModifiers: [] };
+        return {
+            sessionDescriptionHandlerModifiers: [
+                strategy === 'asterisk-sendonly' ? SipJSSession.holdSendonlySdpModifier : SipJSSession.holdSdpModifier,
+            ],
+        };
     }
 
     /** `session.invite()` resolves once the re-INVITE is sent; this waits for the peer's final answer. */
@@ -477,7 +515,11 @@ export class SipJSSession implements ISipSession {
                 ...options,
                 requestDelegate: {
                     onAccept: () => resolve(),
-                    onReject: (response) => reject(new Error(`re-INVITE rejected with SIP ${response.message.statusCode ?? 'error'}.`)),
+                    onReject: (response) => reject(new SipError(
+                        'reinvite-rejected',
+                        `re-INVITE rejected with SIP ${response.message.statusCode ?? 'error'}.`,
+                        { statusCode: response.message.statusCode, reasonPhrase: response.message.reasonPhrase, response },
+                    )),
                 },
             }).catch(reject);
         });
@@ -530,6 +572,7 @@ export class SipJSSession implements ISipSession {
                 this.bus.emit('refer', { referral, raw: referral });
             },
             onMessage: (message) => {
+                acknowledgeMessage(message);
                 currentDelegate.onMessage?.(message);
                 this.bus.emit('message', {
                     message,
@@ -550,45 +593,84 @@ export class SipJSSession implements ISipSession {
 
     private bindPeerConnectionRecovery(): void {
         const pc = this.getPeerConnection();
-        if (!pc || (pc as any).__easySipjsRecoveryBound) return;
-        (pc as any).__easySipjsRecoveryBound = true;
+        if (!pc || this.recoveryBoundTo === pc) return;
+        this.recoveryBoundTo = pc;
 
-        let attempts = 0;
-        const maxAttempts = 2;
+        const recovery = this.settings.mediaRecovery ?? {};
+        const graceMs = recovery.disconnectedGraceMs ?? DEFAULT_DISCONNECTED_GRACE_MS;
 
-        const emitState = () => {
-            this.bus.emit('media-state', {
-                iceConnectionState: pc.iceConnectionState,
-                connectionState: pc.connectionState,
-                recoveryAttempt: attempts,
-            });
-        };
+        pc.addEventListener('connectionstatechange', () => this.emitMediaState(pc));
+        pc.addEventListener('iceconnectionstatechange', () => {
+            this.emitMediaState(pc);
+            if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+            this.recoveryTimer = undefined;
 
-        pc.addEventListener('connectionstatechange', emitState);
-        pc.addEventListener('iceconnectionstatechange', async () => {
-            emitState();
-
-            if (pc.iceConnectionState !== 'failed') return;
-            if (attempts >= maxAttempts) {
-                this.bus.emit('media-failed', { reason: 'ICE failed and media recovery limit reached.' });
+            const state = pc.iceConnectionState;
+            if (state === 'connected' || state === 'completed') {
+                this.recoveryAttempts = 0;
                 return;
             }
-
-            attempts += 1;
-            try {
-                pc.restartIce?.();
-                if (this.session.state === SessionState.Established) {
-                    await this.reinvite();
-                }
-                this.bus.emit('media-state', {
-                    iceConnectionState: pc.iceConnectionState,
-                    connectionState: pc.connectionState,
-                    recoveryAttempt: attempts,
-                });
-            } catch (error) {
-                this.bus.emit('media-failed', { reason: 'ICE restart/re-INVITE failed.', cause: error });
+            if (recovery.enabled === false) {
+                if (state === 'failed') this.bus.emit('media-failed', { reason: 'ICE connection failed.' });
+                return;
+            }
+            if (state === 'failed') {
+                void this.attemptMediaRecovery();
+            } else if (state === 'disconnected') {
+                // Browsers take 15–30s to go from `disconnected` to `failed`. Past a short
+                // grace period (blips recover by themselves) it's not worth the silence.
+                this.recoveryTimer = setTimeout(() => void this.attemptMediaRecovery(), graceMs);
             }
         });
+    }
+
+    async recoverMedia(): Promise<void> {
+        this.recoveryAttempts = 0;
+        await this.attemptMediaRecovery();
+    }
+
+    private emitMediaState(pc: RTCPeerConnection): void {
+        this.bus.emit('media-state', {
+            iceConnectionState: pc.iceConnectionState,
+            connectionState: pc.connectionState,
+            recoveryAttempt: this.recoveryAttempts,
+        });
+    }
+
+    private async attemptMediaRecovery(): Promise<void> {
+        const pc = this.getPeerConnection();
+        if (!pc || this.terminated || this.session.state !== SessionState.Established) return;
+        if (pc.iceConnectionState !== 'failed' && pc.iceConnectionState !== 'disconnected') return;
+        if (this.recovering || this.reinviteInProgress) return;
+
+        const recovery = this.settings.mediaRecovery ?? {};
+        if (this.recoveryAttempts >= (recovery.maxAttempts ?? DEFAULT_MEDIA_RECOVERY_ATTEMPTS)) {
+            this.bus.emit('media-failed', { reason: 'ICE failed and media recovery limit reached.' });
+            return;
+        }
+
+        this.recovering = true;
+        this.recoveryAttempts += 1;
+        // sip.js remembers the options of a re-INVITE for the next ones; ICE restart is
+        // only wanted on this one.
+        const previousOptions = this.session.sessionDescriptionHandlerOptionsReInvite;
+        try {
+            const restartIce = recovery.restartIceOnFailure !== false;
+            await this.reinvite(restartIce ? {
+                // Telling sip.js about the restart makes it wait for the new candidates
+                // instead of sending the offer with the old gathering already "complete".
+                sessionDescriptionHandlerOptions: {
+                    ...previousOptions,
+                    offerOptions: { iceRestart: true },
+                } as Web.SessionDescriptionHandlerOptions,
+            } : {});
+            this.emitMediaState(pc);
+        } catch (error) {
+            this.bus.emit('media-failed', { reason: 'ICE restart/re-INVITE failed.', cause: error });
+        } finally {
+            this.session.sessionDescriptionHandlerOptionsReInvite = previousOptions;
+            this.recovering = false;
+        }
     }
 
     private async sendDtmfInfo(tone: string, durationMs: number): Promise<void> {
@@ -620,6 +702,8 @@ export class SipJSSession implements ISipSession {
     }
 
     private cleanupMedia(): void {
+        if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+        this.recoveryTimer = undefined;
         this.screenTrack?.stop();
         this.screenTrack = undefined;
         this.originalVideoTrack = undefined;
@@ -658,6 +742,14 @@ export class SipJSSession implements ISipSession {
             .replace(/a=recvonly\r\n/g, 'a=inactive\r\n');
         return Promise.resolve({ ...desc, sdp });
     };
+
+    private static holdSendonlySdpModifier = (desc: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> => {
+        if (!desc.sdp || desc.type !== 'offer') return Promise.resolve(desc);
+        const sdp = desc.sdp
+            .replace(/a=sendrecv\r\n/g, 'a=sendonly\r\n')
+            .replace(/a=recvonly\r\n/g, 'a=inactive\r\n');
+        return Promise.resolve({ ...desc, sdp });
+    };
 }
 
 export class SipJSProvider implements ISipProvider {
@@ -674,6 +766,7 @@ export class SipJSProvider implements ISipProvider {
     private lastPingLatencyMs?: number;
     private lastPingError?: string;
     private onUserAgent?: ISipUserAgentDelegate;
+    private sessionDefaults: SipSessionDefaults = {};
 
     async register(
         credentials: SipCredentials,
@@ -694,18 +787,24 @@ export class SipJSProvider implements ISipProvider {
             iceServers,
             iceGatheringTimeoutMs = DEFAULT_ICE_GATHERING_TIMEOUT_MS,
             contactParams = { transport: "ws" },
+            uniqueContact = false,
             debug = false,
             authorizationUsername,
         } = credentials;
 
         this.domain = domain;
+        this.sessionDefaults = {
+            dtmfMode: credentials.dtmfMode,
+            holdStrategy: credentials.holdStrategy,
+            mediaRecovery: credentials.mediaRecovery,
+        };
 
         if (this.userAgent) {
             await this.unregister();
         }
 
         const uri = UserAgent.makeURI(`sip:${phone}@${domain}`);
-        if (!uri) throw new Error("Invalid SIP URI");
+        if (!uri) throw new SipError('invalid-uri', "Invalid SIP URI");
 
         const userAgentDelegate: UserAgentDelegate = {
             onConnect: onUserAgent.onConnect,
@@ -720,7 +819,10 @@ export class SipJSProvider implements ISipProvider {
 
                 onUserAgent.onInvite?.(sipInvitation);
             },
-            onMessage: onUserAgent.onMessage,
+            onMessage: (message) => {
+                acknowledgeMessage(message);
+                onUserAgent.onMessage?.(message);
+            },
             onNotify: onUserAgent.onNotify,
             onRefer: onUserAgent.onRefer,
             onRegister: onUserAgent.onRegister,
@@ -732,8 +834,7 @@ export class SipJSProvider implements ISipProvider {
             authorizationUsername: authorizationUsername ?? phone,
             authorizationPassword: secret,
             uri,
-            contactName: phone,
-            viaHost: domain,
+            ...(uniqueContact ? {} : { contactName: phone, viaHost: domain }),
             transportOptions: { server, traceSip: debug },
             userAgentString,
             contactParams,
@@ -750,8 +851,10 @@ export class SipJSProvider implements ISipProvider {
             }
         });
 
-        this.userAgent.contact.pubGruu = uri;
-        this.userAgent.contact.tempGruu = uri;
+        if (!uniqueContact) {
+            this.userAgent.contact.pubGruu = uri;
+            this.userAgent.contact.tempGruu = uri;
+        }
 
         await this.userAgent.start();
         this.patchContentLengthForModifiedSipBodies();
@@ -776,7 +879,7 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async reconnect(options: { force?: boolean } = {}): Promise<void> {
-        if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent) throw new SipError('not-initialized', "UserAgent not initialized.");
         if (options.force && this.userAgent.isConnected()) {
             // A half-open socket still reports "connected", so `reconnect()` alone would
             // keep using it. Drop it first; a dead peer may never complete the close
@@ -793,10 +896,10 @@ export class SipJSProvider implements ISipProvider {
     /** Sends a REGISTER and resolves only when the registrar accepts it. */
     private sendRegister(delegate?: ISipRegisterDelegate): Promise<void> {
         const registerer = this.registerer;
-        if (!registerer) return Promise.reject(new Error("Registerer not initialized."));
+        if (!registerer) return Promise.reject(new SipError('not-initialized', "Registerer not initialized."));
 
         return new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error("REGISTER timed out.")), REGISTER_TIMEOUT_MS);
+            const timeout = setTimeout(() => reject(new SipError('register-timeout', "REGISTER timed out.")), REGISTER_TIMEOUT_MS);
             const requestDelegate: Core.OutgoingRequestDelegate = {
                 onAccept: (response) => {
                     clearTimeout(timeout);
@@ -844,9 +947,9 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async subscribePresence(target: string, options: PresenceSubscribeOptions = {}): Promise<void> {
-        if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent) throw new SipError('not-initialized', "UserAgent not initialized.");
         const uri = UserAgent.makeURI(this.resolveURI(target));
-        if (!uri) throw new Error(`Invalid presence target URI: ${target}`);
+        if (!uri) throw new SipError('invalid-uri', `Invalid presence target URI: ${target}`);
 
         const key = `${options.event ?? 'presence'}:${uri.toString()}`;
         await this.unsubscribePresence(key);
@@ -892,17 +995,17 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async call(options: CallOptions): Promise<ISipSession> {
-        if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent) throw new SipError('not-initialized', "UserAgent not initialized.");
 
         const { destination, localElement, remoteElement, video, extraHeaders, earlyMedia } = options;
         const target = UserAgent.makeURI(this.resolveURI(destination));
-        if (!target) throw new Error("Invalid destination URI");
+        if (!target) throw new SipError('invalid-uri', "Invalid destination URI");
 
         const inviter = new Inviter(this.userAgent, target, {
             extraHeaders: extraHeaders || [],
             earlyMedia: !!earlyMedia,
         });
-        const sipSession = new SipJSSession(inviter);
+        const sipSession = new SipJSSession(inviter, this.sessionDefaults);
         if (localElement) sipSession.setLocalElement(localElement);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
@@ -927,11 +1030,11 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
-        if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent) throw new SipError('not-initialized', "UserAgent not initialized.");
 
         const { localElement, remoteElement, video, extraHeaders } = options;
         const rawInvitation = invitation.raw as Invitation;
-        const sipSession = new SipJSSession(rawInvitation);
+        const sipSession = new SipJSSession(rawInvitation, this.sessionDefaults);
         if (localElement) sipSession.setLocalElement(localElement);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
 
@@ -964,9 +1067,9 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async sendMessage(destination: string, body: string): Promise<void> {
-        if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent) throw new SipError('not-initialized', "UserAgent not initialized.");
         const target = UserAgent.makeURI(this.resolveURI(destination));
-        if (!target) throw new Error("Invalid destination URI");
+        if (!target) throw new SipError('invalid-uri', "Invalid destination URI");
         const messager = new Messager(this.userAgent, target, body);
         await messager.message();
     }
@@ -980,7 +1083,7 @@ export class SipJSProvider implements ISipProvider {
     }
 
     private async sendOptionsPing(): Promise<void> {
-        if (!this.userAgent || !this.credentials) throw new Error("UserAgent not initialized.");
+        if (!this.userAgent || !this.credentials) throw new SipError('not-initialized', "UserAgent not initialized.");
         const aor = UserAgent.makeURI(`sip:${this.credentials.phone}@${this.credentials.domain}`);
         if (!aor) throw new Error("Invalid SIP AOR for OPTIONS ping.");
         const requestURI = aor.clone();

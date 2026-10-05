@@ -101,6 +101,13 @@ export interface ISipSession {
     /** Current hold status, split by who initiated it. */
     isOnHold?(): { local: boolean; remote: boolean };
 
+    /**
+     * Restarts ICE and renegotiates when the media path is down (ICE `disconnected` or
+     * `failed`). No-op while media is flowing. The client calls this after the signaling
+     * connection comes back, e.g. when the device changed networks mid-call.
+     */
+    recoverMedia?(): Promise<void>;
+
     /** Adds a local video track to an already-established call and renegotiates. No-op if video is already active. */
     upgradeToVideo?(): Promise<void>;
     /** Stops sending the local video track on an already-established call and renegotiates. No-op if there is no active video. */

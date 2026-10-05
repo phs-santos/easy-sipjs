@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SipClient } from "../src/index.js";
+import { SipClient, SipLogCode } from "../src/index.js";
 import type { ISipProvider, ISipRegisterDelegate, ISipUserAgentDelegate } from "../src/index.js";
 
 const credentials = { domain: "example.com", phone: "1000", secret: "x", server: "wss://example.com/ws" };
@@ -166,5 +166,66 @@ describe("SipClient connect()", () => {
         const client = new SipClient(credentials, { provider: "jssip" });
         const provider = await (client as unknown as { providerReady: Promise<{ constructor: { name: string } }> }).providerReady;
         expect(provider.constructor.name).toBe("JsSIPProvider");
+    });
+});
+
+describe("SipClient presets", () => {
+    const sessionDefaults = async (options: ConstructorParameters<typeof SipClient>[1], extraCredentials = {}) => {
+        const { provider } = createFakeProvider();
+        const client = new SipClient({ ...credentials, ...extraCredentials }, { ...options, customProvider: provider });
+        await client.connect();
+        const { dtmfMode, holdStrategy } = provider.register.mock.calls[0][0] as { dtmfMode?: string; holdStrategy?: string };
+        await client.disconnect();
+        return { dtmfMode, holdStrategy };
+    };
+
+    it("behaves like Asterisk when no preset is given", async () => {
+        expect(await sessionDefaults({})).toEqual({ dtmfMode: "sip-info", holdStrategy: "asterisk-inactive" });
+    });
+
+    it("uses automatic DTMF and the standard hold for 'generic'", async () => {
+        expect(await sessionDefaults({ preset: "generic" })).toEqual({ dtmfMode: "auto", holdStrategy: "sipjs-default" });
+    });
+
+    it("lets explicit options win over the preset", async () => {
+        expect(await sessionDefaults({ preset: "generic", dtmfMode: "rtp-event" }, { holdStrategy: "asterisk-sendonly" }))
+            .toEqual({ dtmfMode: "rtp-event", holdStrategy: "asterisk-sendonly" });
+    });
+});
+
+describe("SipClient log codes and media recovery", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("tags its own log lines with a stable code in the label", async () => {
+        const { provider, delegates } = createFakeProvider({ reconnect: vi.fn().mockRejectedValue(new Error("down")) });
+        const client = new SipClient(credentials, { customProvider: provider, maxReconnectAttempts: 1 });
+        await client.connect();
+        const labels: string[] = [];
+        client.onSipLog = (_level, _category, label) => { labels.push(label); };
+
+        delegates.userAgent!.onDisconnect?.(new Error("socket closed"));
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(labels).toEqual([
+            SipLogCode.TransportDisconnected,
+            SipLogCode.ReconnectAttempt,
+            SipLogCode.ReconnectAttemptFailed,
+            SipLogCode.ReconnectExhausted,
+        ]);
+    });
+
+    it("asks ongoing calls to recover their media once signaling is back", async () => {
+        const recoverMedia = vi.fn().mockResolvedValue(undefined);
+        const fakeSession = { id: "s1", on: vi.fn(), recoverMedia };
+        const { provider, delegates } = createFakeProvider({ call: vi.fn().mockResolvedValue(fakeSession) });
+        const client = new SipClient(credentials, { customProvider: provider });
+        await client.connect();
+        await client.dial("1001");
+
+        delegates.userAgent!.onDisconnect?.(new Error("socket closed"));
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(recoverMedia).toHaveBeenCalledTimes(1);
     });
 });
