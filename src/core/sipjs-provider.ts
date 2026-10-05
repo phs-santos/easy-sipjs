@@ -2,6 +2,7 @@ import {
     UserAgent,
     Registerer,
     RegistererRegisterOptions,
+    RegistererState,
     UserAgentDelegate,
     Inviter,
     Session,
@@ -9,6 +10,7 @@ import {
     Messager,
     Web,
     SessionState,
+    SessionInviteOptions,
     Subscriber,
     SubscriptionState,
     Notification,
@@ -32,12 +34,28 @@ import {
     PresenceSubscribeOptions,
     SipHealthStatus,
     SipSessionProgressEvent,
+    SipRegisterResult,
 } from "./types.js";
-import { handleStateChanges } from "./media.js";
-import { ensureSipPrefix, parseRTCStats } from "./utils.js";
+import { assignStream, releaseElement, setElementSink, setElementVolume } from "./media.js";
+import { CallStatsSampler, emptyCallStats, ensureSipPrefix } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
 import { SessionEventBus, SessionListener } from "./session-event-bus.js";
 import { parsePresenceBody } from "./presence.js";
+
+const DEFAULT_ICE_GATHERING_TIMEOUT_MS = 1000;
+// Above SIP Timer F (32s), after which the stack itself fails the request with a 408.
+const REGISTER_TIMEOUT_MS = 40000;
+const FORCED_DISCONNECT_TIMEOUT_MS = 2000;
+const textEncoder = new TextEncoder();
+
+function registerError(response: Core.IncomingResponse): Error {
+    const { statusCode, reasonPhrase } = response.message;
+    return Object.assign(new Error(`REGISTER rejected with SIP ${statusCode ?? 'error'}${reasonPhrase ? ` ${reasonPhrase}` : ''}.`), {
+        statusCode,
+        reasonPhrase,
+        response,
+    });
+}
 
 function toSessionStatus(state: SessionState): SipSessionStatus {
     switch (state) {
@@ -74,17 +92,18 @@ export class SipJSSession implements ISipSession {
     public onHold?: () => void;
     public onUnhold?: () => void;
 
+    private localElement?: HTMLMediaElement;
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
-    private audioCtx?: AudioContext;
-    private gainNode?: GainNode;
     private _muted = false;
     private reinviteInProgress = false;
     private terminated = false;
+    private failure?: SipFailureEvent;
     private localHoldState = false;
     private remoteHoldState = false;
     private bus = new SessionEventBus();
+    private stats = new CallStatsSampler();
 
     constructor(private session: Session) {
         this.id = session.id;
@@ -102,6 +121,12 @@ export class SipJSSession implements ISipSession {
 
     setRemoteElement(el: HTMLMediaElement) {
         this.remoteElement = el;
+        this.attachMedia();
+    }
+
+    setLocalElement(el: HTMLMediaElement) {
+        this.localElement = el;
+        this.attachMedia();
     }
 
     getRawSession(): Session {
@@ -114,6 +139,7 @@ export class SipJSSession implements ISipSession {
     }
 
     emitFailed(event: SipFailureEvent): void {
+        this.failure = event;
         this.onReject?.(event.statusCode ?? 0);
         this.bus.emit('failed', event);
     }
@@ -155,10 +181,11 @@ export class SipJSSession implements ISipSession {
     unmuteVideo(): void { this.toggleVideoTracks(true); }
 
     async hold(): Promise<void> {
-        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        if (this.session.state !== SessionState.Established || this.localHoldState) return;
+        this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
-            await this.session.invite({
+            await this.reinvite({
                 sessionDescriptionHandlerModifiers: [SipJSSession.holdSdpModifier],
             });
             this.toggleAudioTracks(false);
@@ -171,10 +198,11 @@ export class SipJSSession implements ISipSession {
     }
 
     async unhold(): Promise<void> {
-        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        if (this.session.state !== SessionState.Established || !this.localHoldState) return;
+        this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
-            await this.session.invite({
+            await this.reinvite({
                 sessionDescriptionHandlerModifiers: [],
             });
             if (!this._muted) this.toggleAudioTracks(true);
@@ -187,16 +215,17 @@ export class SipJSSession implements ISipSession {
     }
 
     async upgradeToVideo(): Promise<void> {
-        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        if (this.session.state !== SessionState.Established) return;
         const pc = this.getPeerConnection();
         if (pc?.getSenders().some(s => s.track?.kind === 'video')) return;
 
+        this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
             // sip.js's default SessionDescriptionHandler acquires the camera itself and
             // adds the resulting track to the peer connection when `constraints.video`
             // flips to true on a re-INVITE — no manual getUserMedia/addTrack needed here.
-            await this.session.invite({
+            await this.reinvite({
                 sessionDescriptionHandlerOptions: { constraints: { audio: true, video: true } },
             });
         } finally {
@@ -205,12 +234,13 @@ export class SipJSSession implements ISipSession {
     }
 
     async downgradeToAudio(): Promise<void> {
-        if (this.reinviteInProgress || this.session.state !== SessionState.Established) return;
+        if (this.session.state !== SessionState.Established) return;
         const pc = this.getPeerConnection();
         const sender = pc?.getSenders().find(s => s.track?.kind === 'video');
         const track = sender?.track;
         if (!sender || !track) return;
 
+        this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
             // The default SessionDescriptionHandler only adds/replaces tracks on
@@ -221,7 +251,7 @@ export class SipJSSession implements ISipSession {
             // failed renegotiation can restore it instead of leaving it unusable.
             await sender.replaceTrack(null);
             try {
-                await this.session.invite({
+                await this.reinvite({
                     sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
                 });
                 track.stop();
@@ -278,9 +308,7 @@ export class SipJSSession implements ISipSession {
 
     async setAudioOutput(deviceId: string): Promise<void> {
         if (!this.remoteElement) return;
-        if (typeof this.remoteElement.setSinkId === 'function') {
-            await this.remoteElement.setSinkId(deviceId);
-        }
+        await setElementSink(this.remoteElement, deviceId);
     }
 
     async setAudioInput(deviceId: string): Promise<void> {
@@ -307,22 +335,10 @@ export class SipJSSession implements ISipSession {
         previousTrack?.stop();
     }
 
+    /** 0–1 sets the element volume; above 1 amplifies through a gain node. */
     setRemoteVolume(volume: number): void {
         if (!this.remoteElement) return;
-        if (!this.audioCtx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) {
-                this.remoteElement.volume = Math.min(1, Math.max(0, volume));
-                return;
-            }
-            this.audioCtx = new AudioCtx();
-            const source = this.audioCtx.createMediaElementSource(this.remoteElement);
-            this.gainNode = this.audioCtx.createGain();
-            source.connect(this.gainNode);
-            this.gainNode.connect(this.audioCtx.destination);
-        }
-        if (this.audioCtx.state === 'suspended') void this.audioCtx.resume();
-        if (this.gainNode) this.gainNode.gain.value = Math.max(0, volume);
+        setElementVolume(this.remoteElement, volume);
     }
 
     async sendDTMF(tone: string, options: DtmfOptions = {}): Promise<void> {
@@ -393,8 +409,8 @@ export class SipJSSession implements ISipSession {
 
     async getStats(): Promise<CallStats> {
         const pc = this.getPeerConnection();
-        if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
-        return parseRTCStats(pc);
+        if (!pc) return emptyCallStats();
+        return this.stats.sample(pc);
     }
 
     async getQuality(): Promise<CallQualitySnapshot> {
@@ -417,6 +433,7 @@ export class SipJSSession implements ISipSession {
                     this.startedAt = new Date();
                     this.onConfirm?.();
                     this.bus.emit('established');
+                    this.attachMedia();
                     this.bindPeerConnectionRecovery();
                     break;
                 case SessionState.Terminating:
@@ -424,9 +441,45 @@ export class SipJSSession implements ISipSession {
                     break;
                 case SessionState.Terminated:
                     this.cleanupMedia();
-                    this.emitTerminatedOnce();
+                    if (this.session instanceof Inviter && !this.startedAt) {
+                        // sip.js moves an unanswered call to Terminated *before* handing the
+                        // final response to the INVITE's onReject. Waiting one microtask lets
+                        // 'failed' go out first, so 'terminated' carries the status code.
+                        queueMicrotask(() => this.emitTerminatedOnce(this.failure));
+                    } else {
+                        this.emitTerminatedOnce(this.failure);
+                    }
                     break;
             }
+        });
+    }
+
+    /**
+     * Wires the SIP stack's media streams to the app's elements. Runs as soon as
+     * the session description handler exists — the streams are created with it and
+     * tracks are added to those same objects later — so early media (183) plays
+     * and answered audio starts without waiting for the Established transition.
+     */
+    private attachMedia(handler: unknown = this.session.sessionDescriptionHandler): void {
+        if (!(handler instanceof Web.SessionDescriptionHandler)) return;
+        if (this.localElement) assignStream(handler.localMediaStream, this.localElement);
+        if (this.remoteElement) assignStream(handler.remoteMediaStream, this.remoteElement);
+    }
+
+    private assertNoReinviteInProgress(): void {
+        if (this.reinviteInProgress) throw new Error("Another re-INVITE is still in progress on this session.");
+    }
+
+    /** `session.invite()` resolves once the re-INVITE is sent; this waits for the peer's final answer. */
+    private reinvite(options: SessionInviteOptions = {}): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.session.invite({
+                ...options,
+                requestDelegate: {
+                    onAccept: () => resolve(),
+                    onReject: (response) => reject(new Error(`re-INVITE rejected with SIP ${response.message.statusCode ?? 'error'}.`)),
+                },
+            }).catch(reject);
         });
     }
 
@@ -434,6 +487,10 @@ export class SipJSSession implements ISipSession {
         const currentDelegate = this.session.delegate ?? {};
         this.session.delegate = {
             ...currentDelegate,
+            onSessionDescriptionHandler: (handler, provisional) => {
+                currentDelegate.onSessionDescriptionHandler?.(handler, provisional);
+                this.attachMedia(handler);
+            },
             onInvite: (request, response, statusCode) => {
                 currentDelegate.onInvite?.(request, response, statusCode);
                 const body = request.body ?? '';
@@ -521,7 +578,7 @@ export class SipJSSession implements ISipSession {
             try {
                 pc.restartIce?.();
                 if (this.session.state === SessionState.Established) {
-                    await this.session.invite({ requestDelegate: {} });
+                    await this.reinvite();
                 }
                 this.bus.emit('media-state', {
                     iceConnectionState: pc.iceConnectionState,
@@ -566,15 +623,8 @@ export class SipJSSession implements ISipSession {
         this.screenTrack?.stop();
         this.screenTrack = undefined;
         this.originalVideoTrack = undefined;
-        if (this.remoteElement) {
-            try { this.remoteElement.pause(); } catch (_) {}
-            this.remoteElement.srcObject = null;
-        }
-        if (this.audioCtx) {
-            this.audioCtx.close().catch(() => {});
-            this.audioCtx = undefined;
-            this.gainNode = undefined;
-        }
+        releaseElement(this.remoteElement);
+        releaseElement(this.localElement);
     }
 
     private emitTerminatedOnce(event?: SipFailureEvent): void {
@@ -611,6 +661,9 @@ export class SipJSSession implements ISipSession {
 }
 
 export class SipJSProvider implements ISipProvider {
+    // sip.js's Registerer renews the binding itself, based on the expiry the registrar granted.
+    public readonly managesRegistrationRefresh = true;
+
     private userAgent?: UserAgent;
     private registerer?: Registerer;
     private domain?: string;
@@ -639,6 +692,8 @@ export class SipJSProvider implements ISipProvider {
             server,
             userAgentString = "easy-sipjs",
             iceServers,
+            iceGatheringTimeoutMs = DEFAULT_ICE_GATHERING_TIMEOUT_MS,
+            contactParams = { transport: "ws" },
             debug = false,
             authorizationUsername,
         } = credentials;
@@ -681,7 +736,7 @@ export class SipJSProvider implements ISipProvider {
             viaHost: domain,
             transportOptions: { server, traceSip: debug },
             userAgentString,
-            contactParams: { transport: "wss" },
+            contactParams,
             delegate: userAgentDelegate,
             logLevel: debug ? "log" : "error",
             logConnector: debug
@@ -689,9 +744,10 @@ export class SipJSProvider implements ISipProvider {
                     onSipLog?.(level, category, label || "", content);
                 }
                 : undefined,
-            sessionDescriptionHandlerFactoryOptions: iceServers ? {
-                peerConnectionConfiguration: { iceServers }
-            } : undefined
+            sessionDescriptionHandlerFactoryOptions: {
+                iceGatheringTimeout: iceGatheringTimeoutMs,
+                ...(iceServers ? { peerConnectionConfiguration: { iceServers } } : {}),
+            }
         });
 
         this.userAgent.contact.pubGruu = uri;
@@ -700,34 +756,66 @@ export class SipJSProvider implements ISipProvider {
         await this.userAgent.start();
         this.patchContentLengthForModifiedSipBodies();
 
-        this.registerer = new Registerer(this.userAgent, { expires: 3600 });
+        const registerer = new Registerer(this.userAgent, { expires: 3600 });
+        this.registerer = registerer;
 
-        const registerDelegate: Core.OutgoingRequestDelegate = {
-            onAccept: (response) => {
-                this.registered = true;
-                onRegister.onAccept?.(response);
-            },
-            onReject: (response) => {
-                this.registered = false;
-                onRegister.onReject?.(response);
-            },
-            onTrying: onRegister.onTrying,
-            onRedirect: onRegister.onRedirect,
-        };
+        // The Registerer's own state is the source of truth: it also covers the
+        // refreshes it sends by itself and a binding that expires because one failed.
+        registerer.stateChange.addListener((state) => {
+            if (this.registerer !== registerer) return;
+            const wasRegistered = this.registered;
+            this.registered = state === RegistererState.Registered;
+            if (wasRegistered && state === RegistererState.Unregistered) onRegister.onUnregistered?.();
+        });
 
-        await this.registerer.register({ requestDelegate: registerDelegate } as RegistererRegisterOptions);
+        await this.sendRegister(onRegister);
     }
 
     async refreshRegistration(): Promise<void> {
-        if (!this.registerer) throw new Error("Registerer not initialized.");
-        await this.registerer.register();
-        this.registered = true;
+        await this.sendRegister();
     }
 
-    async reconnect(): Promise<void> {
+    async reconnect(options: { force?: boolean } = {}): Promise<void> {
         if (!this.userAgent) throw new Error("UserAgent not initialized.");
+        if (options.force && this.userAgent.isConnected()) {
+            // A half-open socket still reports "connected", so `reconnect()` alone would
+            // keep using it. Drop it first; a dead peer may never complete the close
+            // handshake, hence the cap on how long to wait for it.
+            await Promise.race([
+                this.userAgent.transport.disconnect(),
+                new Promise(resolve => setTimeout(resolve, FORCED_DISCONNECT_TIMEOUT_MS)),
+            ]).catch(() => {});
+        }
         await this.userAgent.reconnect();
-        if (this.registerer) await this.refreshRegistration();
+        if (this.registerer) await this.sendRegister();
+    }
+
+    /** Sends a REGISTER and resolves only when the registrar accepts it. */
+    private sendRegister(delegate?: ISipRegisterDelegate): Promise<void> {
+        const registerer = this.registerer;
+        if (!registerer) return Promise.reject(new Error("Registerer not initialized."));
+
+        return new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("REGISTER timed out.")), REGISTER_TIMEOUT_MS);
+            const requestDelegate: Core.OutgoingRequestDelegate = {
+                onAccept: (response) => {
+                    clearTimeout(timeout);
+                    delegate?.onAccept?.(response);
+                    resolve();
+                },
+                onReject: (response) => {
+                    clearTimeout(timeout);
+                    delegate?.onReject?.(response);
+                    reject(registerError(response));
+                },
+                onTrying: delegate?.onTrying,
+                onRedirect: delegate?.onRedirect,
+            };
+            registerer.register({ requestDelegate } as RegistererRegisterOptions).catch((error) => {
+                clearTimeout(timeout);
+                reject(error);
+            });
+        });
     }
 
     async ping(): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
@@ -761,7 +849,7 @@ export class SipJSProvider implements ISipProvider {
         if (!uri) throw new Error(`Invalid presence target URI: ${target}`);
 
         const key = `${options.event ?? 'presence'}:${uri.toString()}`;
-        await this.unsubscribePresence(key).catch(() => {});
+        await this.unsubscribePresence(key);
 
         const subscriber = new Subscriber(this.userAgent, uri, options.event ?? 'presence', {
             expires: options.expires ?? 3600,
@@ -777,7 +865,7 @@ export class SipJSProvider implements ISipProvider {
         };
 
         subscriber.stateChange.addListener((state) => {
-            if (state === SubscriptionState.Terminated) {
+            if (state === SubscriptionState.Terminated && this.subscribers.get(key) === subscriber) {
                 this.subscribers.delete(key);
             }
         });
@@ -786,36 +874,37 @@ export class SipJSProvider implements ISipProvider {
         await subscriber.subscribe();
     }
 
+    /** `target` is an extension/URI (every event package subscribed for it) or an exact `event:uri` key. */
     async unsubscribePresence(target: string): Promise<void> {
-        const direct = this.subscribers.get(target);
-        if (direct) {
-            await direct.unsubscribe().catch(() => {});
-            this.subscribers.delete(target);
-            return;
+        let keys: string[] = [];
+        if (this.subscribers.has(target)) {
+            keys = [target];
+        } else {
+            const uri = UserAgent.makeURI(this.resolveURI(target))?.toString();
+            if (uri) keys = [...this.subscribers.keys()].filter(key => key.endsWith(`:${uri}`));
         }
 
-        for (const [key, subscriber] of [...this.subscribers.entries()]) {
-            if (key.includes(target)) {
-                await subscriber.unsubscribe().catch(() => {});
-                this.subscribers.delete(key);
-            }
-        }
+        await Promise.all(keys.map(async (key) => {
+            const subscriber = this.subscribers.get(key);
+            this.subscribers.delete(key);
+            await subscriber?.unsubscribe().catch(() => {});
+        }));
     }
 
     async call(options: CallOptions): Promise<ISipSession> {
         if (!this.userAgent) throw new Error("UserAgent not initialized.");
 
-        const { destination, localElement, remoteElement, video, extraHeaders } = options;
+        const { destination, localElement, remoteElement, video, extraHeaders, earlyMedia } = options;
         const target = UserAgent.makeURI(this.resolveURI(destination));
         if (!target) throw new Error("Invalid destination URI");
 
         const inviter = new Inviter(this.userAgent, target, {
-            extraHeaders: extraHeaders || []
+            extraHeaders: extraHeaders || [],
+            earlyMedia: !!earlyMedia,
         });
         const sipSession = new SipJSSession(inviter);
+        if (localElement) sipSession.setLocalElement(localElement);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
-
-        handleStateChanges(inviter, localElement, remoteElement);
 
         await inviter.invite({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
@@ -843,9 +932,8 @@ export class SipJSProvider implements ISipProvider {
         const { localElement, remoteElement, video, extraHeaders } = options;
         const rawInvitation = invitation.raw as Invitation;
         const sipSession = new SipJSSession(rawInvitation);
+        if (localElement) sipSession.setLocalElement(localElement);
         if (remoteElement) sipSession.setRemoteElement(remoteElement);
-
-        handleStateChanges(rawInvitation, localElement, remoteElement);
 
         await rawInvitation.accept({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: !!video } },
@@ -856,18 +944,19 @@ export class SipJSProvider implements ISipProvider {
     }
 
     async unregister(): Promise<void> {
-        for (const subscriber of this.subscribers.values()) {
-            await subscriber.unsubscribe().catch(() => {});
-        }
+        const subscribers = [...this.subscribers.values()];
         this.subscribers.clear();
+        await Promise.all(subscribers.map(subscriber => subscriber.unsubscribe().catch(() => {})));
 
-        if (this.registerer) {
-            try {
-                await this.registerer.unregister();
-            } catch (_) {}
-            this.registerer = undefined;
-        }
+        // Cleared first so the state listener ignores this deliberate unregister.
+        const registerer = this.registerer;
+        this.registerer = undefined;
         this.registered = false;
+        if (registerer) {
+            try {
+                await registerer.unregister();
+            } catch (_) {}
+        }
         if (this.userAgent) {
             await this.userAgent.stop();
             this.userAgent = undefined;
@@ -945,10 +1034,14 @@ export class SipJSProvider implements ISipProvider {
             const sep = raw.indexOf('\r\n\r\n');
             if (sep === -1) return origOnMessage(raw);
             const body = raw.slice(sep + 4);
-            const actualBodyLen = new TextEncoder().encode(body).length;
+            const actualBodyLen = textEncoder.encode(body).length;
             const patched = raw.replace(/Content-Length:\s*\d+\r\n/i, `Content-Length: ${actualBodyLen}\r\n`);
             origOnMessage(patched);
         };
+    }
+
+    getRegisterResult(): SipRegisterResult {
+        return { userAgent: this.userAgent, registerer: this.registerer };
     }
 
     public getUserAgent() { return this.userAgent; }

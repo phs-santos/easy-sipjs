@@ -10,6 +10,7 @@ import {
     PresenceEvent,
     PresenceSubscribeOptions,
     SipHealthStatus,
+    SipRegisterResult,
 } from "./types.js";
 
 export interface ISipProvider {
@@ -28,8 +29,21 @@ export interface ISipProvider {
     /** Refreshes REGISTER without recreating the underlying UserAgent when supported. */
     refreshRegistration?(): Promise<void>;
 
-    /** Reconnects the WebSocket/signaling layer without a full client teardown when supported. */
-    reconnect?(): Promise<void>;
+    /**
+     * True when the provider renews REGISTER by itself before it expires. `SipClient`
+     * then leaves the refresh to it instead of running its own expiry timer.
+     */
+    readonly managesRegistrationRefresh?: boolean;
+
+    /**
+     * Reconnects the WebSocket/signaling layer without a full client teardown when supported,
+     * resolving once registered again. `force` drops a socket that still looks connected
+     * (half-open) instead of trusting it.
+     */
+    reconnect?(options?: { force?: boolean }): Promise<void>;
+
+    /** Underlying user agent/registerer objects, for apps that need the raw SIP stack. */
+    getRegisterResult?(): SipRegisterResult;
 
     /** Lightweight provider health snapshot. */
     getHealth?(): Partial<SipHealthStatus>;
@@ -110,5 +124,8 @@ export interface ISipRegisterDelegate {
     onReject?: (error?: unknown) => void;
     onTrying?: () => void;
     onRedirect?: (data?: unknown) => void;
+    /** Only fires for providers that don't renew REGISTER themselves (see `managesRegistrationRefresh`). */
     onExpiring?: () => void;
+    /** The registration was lost (expired or refused on refresh) without the app asking for it. */
+    onUnregistered?: () => void;
 }

@@ -5,12 +5,16 @@ import type { UA, RTCSessionEvent, IncomingMessageEvent, OutgoingMessageEvent } 
 import type { IncomingRequest } from "jssip/lib/SIPMessage.js";
 import type { Subscriber } from "jssip/lib/Subscriber.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./provider.js";
-import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot, DtmfOptions, SipSessionEventMap, SipFailureEvent, SipHealthStatus, PresenceSubscribeOptions } from "./types.js";
-import { assignStream } from "./media.js";
-import { ensureSipPrefix, parseRTCStats } from "./utils.js";
+import { SipCredentials, CallOptions, AnswerOptions, SipInvitation, CallStats, CallQualitySnapshot, DtmfOptions, SipSessionEventMap, SipFailureEvent, SipHealthStatus, PresenceSubscribeOptions, SipRegisterResult } from "./types.js";
+import { assignStream, releaseElement, setElementSink, setElementVolume } from "./media.js";
+import { CallStatsSampler, emptyCallStats, ensureSipPrefix } from "./utils.js";
 import { createCallQualitySnapshot } from "./call-quality.js";
 import { SessionEventBus, SessionListener } from "./session-event-bus.js";
 import { parsePresenceBody } from "./presence.js";
+
+const DEFAULT_ICE_GATHERING_TIMEOUT_MS = 1000;
+// Above SIP Timer F (32s), after which the stack itself fails the request.
+const REGISTER_TIMEOUT_MS = 40000;
 
 interface JsSipNotifyEvent {
     event: string;
@@ -31,13 +35,24 @@ export class JsSIPSession implements ISipSession {
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
-    private audioCtx?: AudioContext;
-    private gainNode?: GainNode;
     private terminated = false;
     private bus = new SessionEventBus();
+    private stats = new CallStatsSampler();
 
-    constructor(private session: RTCSession) {
+    constructor(private session: RTCSession, iceGatheringTimeoutMs = DEFAULT_ICE_GATHERING_TIMEOUT_MS) {
         this.id = session.id || Math.random().toString(36).substring(2, 11);
+
+        if (iceGatheringTimeoutMs > 0) {
+            // JsSIP waits for ICE gathering to finish before sending the SDP, which stalls
+            // the call for many seconds when a STUN/TURN server doesn't answer. `ready()`
+            // tells it to go ahead with the candidates gathered so far.
+            const scheduled = new WeakSet<() => void>();
+            this.session.on("icecandidate", (event: { ready: () => void }) => {
+                if (scheduled.has(event.ready)) return;
+                scheduled.add(event.ready);
+                setTimeout(() => event.ready(), iceGatheringTimeoutMs);
+            });
+        }
 
         this.session.on("progress", (event: IncomingEvent | OutgoingEvent) => {
             this.onProgress?.();
@@ -245,9 +260,7 @@ export class JsSIPSession implements ISipSession {
 
     async setAudioOutput(deviceId: string): Promise<void> {
         if (!this.remoteElement) return;
-        if (typeof this.remoteElement.setSinkId === 'function') {
-            await this.remoteElement.setSinkId(deviceId);
-        }
+        await setElementSink(this.remoteElement, deviceId);
     }
 
     async setAudioInput(deviceId: string): Promise<void> {
@@ -268,20 +281,10 @@ export class JsSIPSession implements ISipSession {
         previousTrack?.stop();
     }
 
+    /** 0–1 sets the element volume; above 1 amplifies through a gain node. */
     setRemoteVolume(volume: number): void {
         if (!this.remoteElement) return;
-        if (!this.audioCtx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return;
-            this.audioCtx = new AudioCtx();
-            const source = this.audioCtx.createMediaElementSource(this.remoteElement);
-            this.gainNode = this.audioCtx.createGain();
-            source.connect(this.gainNode);
-            this.gainNode.connect(this.audioCtx.destination);
-        }
-        if (this.gainNode) {
-            this.gainNode.gain.value = Math.max(0, volume);
-        }
+        setElementVolume(this.remoteElement, volume);
     }
 
     async sendDTMF(tone: string, options: DtmfOptions = {}): Promise<void> {
@@ -321,8 +324,8 @@ export class JsSIPSession implements ISipSession {
 
     async getStats(): Promise<CallStats> {
         const pc = this.session.connection;
-        if (!pc) return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
-        return parseRTCStats(pc);
+        if (!pc) return emptyCallStats();
+        return this.stats.sample(pc);
     }
 
     async getQuality(): Promise<CallQualitySnapshot> {
@@ -332,15 +335,7 @@ export class JsSIPSession implements ISipSession {
     }
 
     private cleanupAudio(): void {
-        if (this.remoteElement) {
-            try { this.remoteElement.pause(); } catch (_) {}
-            this.remoteElement.srcObject = null;
-        }
-        if (this.audioCtx) {
-            this.audioCtx.close().catch(() => {});
-            this.audioCtx = undefined;
-            this.gainNode = undefined;
-        }
+        releaseElement(this.remoteElement);
     }
 
     private emitTerminatedOnce(event?: SipFailureEvent): void {
@@ -353,7 +348,11 @@ export class JsSIPSession implements ISipSession {
 }
 
 export class JsSIPProvider implements ISipProvider {
+    // JsSIP's Registrator renews the binding itself before it expires.
+    public readonly managesRegistrationRefresh = true;
+
     private ua?: UA;
+    private iceGatheringTimeoutMs?: number;
     private domain?: string;
     private onUserAgent?: ISipUserAgentDelegate;
     private subscribers = new Map<string, Subscriber>();
@@ -370,6 +369,7 @@ export class JsSIPProvider implements ISipProvider {
 
         this.domain = domain;
         this.onUserAgent = onUserAgent;
+        this.iceGatheringTimeoutMs = credentials.iceGatheringTimeoutMs;
         const socket = new JsSIP.WebSocketInterface(server);
         const configuration = {
             sockets: [socket],
@@ -381,12 +381,17 @@ export class JsSIPProvider implements ISipProvider {
             pcConfig: iceServers ? { iceServers } : undefined
         };
 
-        this.ua = new JsSIP.UA(configuration);
+        const ua = new JsSIP.UA(configuration);
+        this.ua = ua;
 
-        this.ua.on("registered", (event) => { onRegister.onAccept?.(event); });
-        this.ua.on("registrationFailed", (event) => { onRegister.onReject?.(event); });
-        this.ua.on("connected", (event) => { onUserAgent.onConnect?.(event); });
-        this.ua.on("disconnected", (event) => { onUserAgent.onDisconnect?.(); });
+        ua.on("registered", (event) => { onRegister.onAccept?.(event); });
+        ua.on("registrationFailed", (event) => { onRegister.onReject?.(event); });
+        ua.on("unregistered", () => {
+            // `unregister()` clears `this.ua` first, so a deliberate stop isn't reported as a loss.
+            if (this.ua === ua) onRegister.onUnregistered?.();
+        });
+        ua.on("connected", (event) => { onUserAgent.onConnect?.(event); });
+        ua.on("disconnected", (event) => { onUserAgent.onDisconnect?.(); });
 
         this.ua.on("newRTCSession", (event: RTCSessionEvent) => {
             if (event.originator === "remote") {
@@ -416,7 +421,33 @@ export class JsSIPProvider implements ISipProvider {
             });
         });
 
-        this.ua.start();
+        const registered = this.waitForRegistration(ua);
+        registered.catch(() => {}); // awaited below; avoids an unhandled rejection if start() throws
+        ua.start();
+        await registered;
+    }
+
+    /** Resolves on the next successful REGISTER, rejects if it is refused or never answered. */
+    private waitForRegistration(ua: UA): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
+                clearTimeout(timeout);
+                ua.removeListener("registered", onRegistered);
+                ua.removeListener("registrationFailed", onFailed);
+            };
+            const onRegistered = () => { cleanup(); resolve(); };
+            const onFailed = (event: { cause?: string; response?: { status_code?: number; reason_phrase?: string } }) => {
+                cleanup();
+                reject(Object.assign(new Error(`REGISTER failed: ${event?.cause ?? 'unknown cause'}.`), {
+                    statusCode: event?.response?.status_code,
+                    reasonPhrase: event?.response?.reason_phrase,
+                    cause: event?.cause,
+                }));
+            };
+            const timeout = setTimeout(() => { cleanup(); reject(new Error("REGISTER timed out.")); }, REGISTER_TIMEOUT_MS);
+            ua.on("registered", onRegistered);
+            ua.on("registrationFailed", onFailed);
+        });
     }
 
     private resolveURI(destination: string): string {
@@ -438,7 +469,7 @@ export class JsSIPProvider implements ISipProvider {
             extraHeaders: extraHeaders || []
         });
 
-        const jsSipSession = new JsSIPSession(session);
+        const jsSipSession = new JsSIPSession(session, this.iceGatheringTimeoutMs);
         if (remoteElement) jsSipSession.setRemoteElement(remoteElement);
 
         return jsSipSession;
@@ -448,13 +479,15 @@ export class JsSIPProvider implements ISipProvider {
         const { remoteElement, video, extraHeaders } = options;
 
         const rawSession = invitation.raw as RTCSession;
+        // Wrapped before answering: `answer()` creates the peer connection synchronously,
+        // and the wrapper has to be listening by then to wire the remote audio.
+        const jsSipSession = new JsSIPSession(rawSession, this.iceGatheringTimeoutMs);
+        if (remoteElement) jsSipSession.setRemoteElement(remoteElement);
+
         rawSession.answer({
             mediaConstraints: { audio: true, video: !!video },
             extraHeaders: extraHeaders || []
         });
-
-        const jsSipSession = new JsSIPSession(rawSession);
-        if (remoteElement) jsSipSession.setRemoteElement(remoteElement);
 
         return jsSipSession;
     }
@@ -465,10 +498,9 @@ export class JsSIPProvider implements ISipProvider {
         }
         this.subscribers.clear();
 
-        if (this.ua) {
-            this.ua.stop();
-            this.ua = undefined;
-        }
+        const ua = this.ua;
+        this.ua = undefined;
+        ua?.stop();
     }
 
     async subscribePresence(target: string, options: PresenceSubscribeOptions = {}): Promise<void> {
@@ -491,26 +523,24 @@ export class JsSIPProvider implements ISipProvider {
         });
 
         subscriber.on('terminated', () => {
-            this.subscribers.delete(key);
+            if (this.subscribers.get(key) === subscriber) this.subscribers.delete(key);
         });
 
         this.subscribers.set(key, subscriber);
         subscriber.subscribe();
     }
 
+    /** `target` is an extension/URI (every event package subscribed for it) or an exact `event:uri` key. */
     async unsubscribePresence(target: string): Promise<void> {
-        const direct = this.subscribers.get(target);
-        if (direct) {
-            try { direct.terminate(); } catch (_) {}
-            this.subscribers.delete(target);
-            return;
-        }
+        const uri = this.resolveURI(target);
+        const keys = this.subscribers.has(target)
+            ? [target]
+            : [...this.subscribers.keys()].filter(key => key.endsWith(`:${uri}`));
 
-        for (const [key, subscriber] of [...this.subscribers.entries()]) {
-            if (key.includes(target)) {
-                try { subscriber.terminate(); } catch (_) {}
-                this.subscribers.delete(key);
-            }
+        for (const key of keys) {
+            const subscriber = this.subscribers.get(key);
+            this.subscribers.delete(key);
+            try { subscriber?.terminate(); } catch (_) {}
         }
     }
 
@@ -548,13 +578,21 @@ export class JsSIPProvider implements ISipProvider {
      * touching the UA.
      */
     async reconnect(): Promise<void> {
-        if (!this.ua) throw new Error("UA not initialized.");
-        if (!this.ua.isConnected()) {
+        const ua = this.ua;
+        if (!ua) throw new Error("UA not initialized.");
+        if (!ua.isConnected()) {
             throw new Error("WebSocket not reconnected yet (JsSIP auto-recovery in progress).");
         }
-        if (!this.ua.isRegistered()) {
-            this.ua.register();
-        }
+        if (ua.isRegistered()) return;
+
+        const registered = this.waitForRegistration(ua);
+        registered.catch(() => {});
+        ua.register();
+        await registered;
+    }
+
+    getRegisterResult(): SipRegisterResult {
+        return { userAgent: this.ua ?? this, registerer: null };
     }
 
     public getUA(): UA | undefined { return this.ua; }

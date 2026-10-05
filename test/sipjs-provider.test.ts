@@ -11,7 +11,11 @@ function createFakeSession(peerConnection?: unknown) {
         remoteIdentity: { uri: { host: "example.com" } },
         sessionDescriptionHandler: peerConnection ? { peerConnection } : undefined,
         refer: vi.fn().mockResolvedValue(undefined),
-        invite: vi.fn().mockResolvedValue(undefined),
+        // sip.js resolves invite() when the re-INVITE is sent; the peer's answer arrives through requestDelegate.
+        invite: vi.fn((options?: { requestDelegate?: { onAccept?: () => void } }) => {
+            options?.requestDelegate?.onAccept?.();
+            return Promise.resolve();
+        }),
     } as any;
 }
 
@@ -156,9 +160,9 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
 
         await session.upgradeToVideo();
 
-        expect(rawSession.invite).toHaveBeenCalledWith({
+        expect(rawSession.invite).toHaveBeenCalledWith(expect.objectContaining({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: true } },
-        });
+        }));
     });
 
     it("downgradeToAudio() is a no-op if there is no active video sender", async () => {
@@ -182,8 +186,77 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
 
         expect(videoTrack.stop).toHaveBeenCalled();
         expect(replaceTrack).toHaveBeenCalledWith(null);
-        expect(rawSession.invite).toHaveBeenCalledWith({
+        expect(rawSession.invite).toHaveBeenCalledWith(expect.objectContaining({
             sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+        }));
+    });
+});
+
+describe("SipJSSession.hold / unhold (wait for the peer's answer to the re-INVITE)", () => {
+    it("only reports the hold once the re-INVITE is accepted", async () => {
+        const rawSession = createFakeSession();
+        let accept: (() => void) | undefined;
+        rawSession.invite = vi.fn((options: { requestDelegate: { onAccept: () => void } }) => {
+            accept = options.requestDelegate.onAccept;
+            return Promise.resolve();
         });
+        const session = new SipJSSession(rawSession);
+        const hold = vi.fn();
+        session.on("hold", hold);
+
+        const pending = session.hold();
+        await Promise.resolve();
+        expect(session.isOnHold().local).toBe(false);
+        expect(hold).not.toHaveBeenCalled();
+
+        accept!();
+        await pending;
+        expect(session.isOnHold().local).toBe(true);
+        expect(hold).toHaveBeenCalledWith({ originator: "local" });
+    });
+
+    it("rejects and stays off hold when the peer refuses the re-INVITE", async () => {
+        const rawSession = createFakeSession();
+        rawSession.invite = vi.fn((options: { requestDelegate: { onReject: (r: unknown) => void } }) => {
+            options.requestDelegate.onReject({ message: { statusCode: 488 } });
+            return Promise.resolve();
+        });
+        const session = new SipJSSession(rawSession);
+
+        await expect(session.hold()).rejects.toThrow(/488/);
+        expect(session.isOnHold().local).toBe(false);
+    });
+
+    it("refuses a second re-INVITE while one is still in progress instead of silently doing nothing", async () => {
+        const rawSession = createFakeSession();
+        rawSession.invite = vi.fn(() => Promise.resolve()); // never answered
+        const session = new SipJSSession(rawSession);
+
+        void session.hold();
+        await expect(session.upgradeToVideo()).rejects.toThrow(/in progress/i);
+    });
+
+    it("unhold() is a no-op when the call isn't on hold", async () => {
+        const rawSession = createFakeSession();
+        const session = new SipJSSession(rawSession);
+
+        await session.unhold();
+
+        expect(rawSession.invite).not.toHaveBeenCalled();
+    });
+});
+
+describe("SipJSSession failure ordering", () => {
+    it("carries the failure reported by the INVITE into 'terminated'", () => {
+        const rawSession = createFakeSession();
+        const session = new SipJSSession(rawSession);
+        const terminated = vi.fn();
+        session.on("terminated", terminated);
+
+        session.emitFailed({ statusCode: 486, reasonPhrase: "Busy Here" });
+        const onStateChange = rawSession.stateChange.addListener.mock.calls[0][0] as (state: SessionState) => void;
+        onStateChange(SessionState.Terminated);
+
+        expect(terminated).toHaveBeenCalledWith({ statusCode: 486, reasonPhrase: "Busy Here" });
     });
 });

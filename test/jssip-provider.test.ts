@@ -249,6 +249,52 @@ describe("JsSIPProvider.subscribePresence (parity with SipJSProvider)", () => {
     });
 });
 
+describe("JsSIPProvider.unsubscribePresence (exact target matching)", () => {
+    it("leaves other extensions that merely contain the target untouched", async () => {
+        const provider = new JsSIPProvider();
+        const subscribers = new Map<string, ReturnType<typeof createFakeSubscriber>>();
+        const fakeUa = {
+            subscribe: vi.fn((target: string) => {
+                const subscriber = createFakeSubscriber();
+                subscribers.set(target, subscriber);
+                return subscriber;
+            }),
+        };
+        (provider as unknown as { ua: unknown }).ua = fakeUa;
+        (provider as unknown as { domain: string }).domain = "example.com";
+
+        await provider.subscribePresence("10");
+        await provider.subscribePresence("100");
+        await provider.subscribePresence("1010", { event: "dialog" });
+        await provider.unsubscribePresence("10");
+
+        expect(subscribers.get("sip:10@example.com")!.terminate).toHaveBeenCalled();
+        expect(subscribers.get("sip:100@example.com")!.terminate).not.toHaveBeenCalled();
+        expect(subscribers.get("sip:1010@example.com")!.terminate).not.toHaveBeenCalled();
+    });
+});
+
+describe("JsSIPSession ICE gathering timeout", () => {
+    it("tells jssip to proceed with the candidates gathered so far once the timeout elapses", () => {
+        vi.useFakeTimers();
+        try {
+            const rawSession = createFakeSession();
+            new JsSIPSession(rawSession, 800);
+            const ready = vi.fn();
+
+            trigger(rawSession, "icecandidate", { ready });
+            trigger(rawSession, "icecandidate", { ready });
+            vi.advanceTimersByTime(799);
+            expect(ready).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(1);
+            expect(ready).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
     it("upgradeToVideo() is a no-op if a video sender is already active", async () => {
         const pc = { getSenders: () => [{ track: { kind: "video" } }] };

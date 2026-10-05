@@ -10,12 +10,11 @@ import {
     PresenceEvent,
     DtmfOptions,
     SoftphonePreset,
+    SoftphoneSounds,
     CreateSoftphoneConfig,
     SoftphoneDiagnostics,
 } from "./core/types.js";
 import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider.js";
-import { SipJSProvider } from "./core/sipjs-provider.js";
-import { JsSIPProvider } from "./core/jssip-provider.js";
 import { SipAudioSynthesizer } from "./core/audio-synthesizer.js";
 import { SipEventEmitter, SipEventMap } from "./core/event-emitter.js";
 import { DeviceManager } from "./core/device-manager.js";
@@ -24,31 +23,40 @@ import { redactSipLog } from "./core/logger.js";
 export interface SipClientOptions {
     /** Use a preset so app developers do not need to know SIP.js internals. */
     preset?: SoftphonePreset;
+    /** Defaults to `sipjs`. The SIP stack is loaded on demand, so only the chosen one ends up in the app's bundle. */
     provider?: 'sipjs' | 'jssip';
     customProvider?: ISipProvider;
-    sounds?: {
-        ringtone?: string;
-        ringback?: string;
-    };
+    /** Ringtone/ringback. `false` (for everything or per sound) leaves the sounds to the app. */
+    sounds?: SoftphoneSounds;
     /** Defaults to true. Keeps REGISTER alive without forcing the app to know about SIP timers. */
     autoRefreshRegistration?: boolean;
     /** Defaults to true. Reconnects after unexpected transport/network disconnects. */
     autoReconnect?: boolean;
     maxReconnectAttempts?: number;
+    /** Base of the exponential backoff, in ms. The first retry after a drop is always quick (≤500ms). */
     reconnectDelay?: number;
     maxReconnectDelay?: number;
+    /** Only used with a custom provider that doesn't renew REGISTER by itself. */
     registrationExpiringBuffer?: number;
     /** Defaults to true. Redacts Authorization, nonce, usernames and secrets before forwarding SIP logs. */
     logRedaction?: boolean;
-    /** Optional periodic health check. Disabled by default; pass e.g. 30000. */
+    /**
+     * Optional periodic health check (SIP OPTIONS ping). Disabled by default; pass e.g. 30000.
+     * Two failed pings in a row drop the socket and reconnect, which is how a half-open
+     * WebSocket (still "connected", but dead) gets noticed.
+     */
     healthCheckIntervalMs?: number;
 }
+
+const FIRST_RECONNECT_DELAY_MS = 500;
+const PING_FAILURES_BEFORE_RECONNECT = 2;
 
 export class SipClient {
     private sessions: ISipSession[] = [];
     private activeSessionId?: string;
     private connectionState: SipConnectionState = 'disconnected';
-    private provider: ISipProvider;
+    private provider?: ISipProvider;
+    private providerReady: Promise<ISipProvider>;
     private emitter = new SipEventEmitter();
     public readonly devices = new DeviceManager();
 
@@ -58,9 +66,13 @@ export class SipClient {
     public onConnectionStateChange?: (state: SipConnectionState) => void;
     public onSipLog?: (level: string, category: string, label: string, content: string) => void;
 
+    private started = false;
     private intentionalDisconnect = false;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private reconnectAttempt = 0;
+    private reconnecting = false;
+    private forceNextReconnect = false;
+    private pingFailures = 0;
     private maxReconnectAttempts: number;
     private reconnectDelay: number;
     private maxReconnectDelay: number;
@@ -71,9 +83,9 @@ export class SipClient {
     private registrationExpiringBuffer: number;
     private networkMonitoringEnabled = false;
 
-    private ringtoneAudio?: HTMLAudioElement;
-    private ringbackAudio?: HTMLAudioElement;
-    private synthesizer = new SipAudioSynthesizer();
+    private soundElements: { ringtone?: HTMLAudioElement; ringback?: HTMLAudioElement } = {};
+    // One per sound, so answering a call doesn't cut the ringtone of a second one and vice versa.
+    private synthesizers = { ringtone: new SipAudioSynthesizer(), ringback: new SipAudioSynthesizer() };
 
     private operationLock: Promise<void> = Promise.resolve();
     private presenceSubscriptions = new Map<string, PresenceSubscribeOptions | undefined>();
@@ -118,13 +130,9 @@ export class SipClient {
     }
 
     constructor(private credentials: SipCredentials, private options: SipClientOptions = {}) {
-        if (options.customProvider) {
-            this.provider = options.customProvider;
-        } else if ((options.provider ?? (options.preset === 'generic' ? 'sipjs' : 'sipjs')) === 'jssip') {
-            this.provider = new JsSIPProvider();
-        } else {
-            this.provider = new SipJSProvider();
-        }
+        this.provider = options.customProvider;
+        this.providerReady = this.loadProvider();
+        this.providerReady.catch(() => undefined); // surfaced by whichever call awaits it
 
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
         this.reconnectDelay = options.reconnectDelay ?? 5000;
@@ -134,11 +142,26 @@ export class SipClient {
         this.autoRefreshRegistration = options.autoRefreshRegistration ?? true;
 
         this.setupNetworkMonitoring();
-        if (options.healthCheckIntervalMs) {
-            this.healthTimer = setInterval(() => {
-                this.checkHealth().catch(() => undefined);
-            }, options.healthCheckIntervalMs);
+    }
+
+    /**
+     * Each SIP stack is a separate chunk loaded on demand: an app that only uses
+     * `sipjs` never downloads JsSIP, and the other way around.
+     */
+    private async loadProvider(): Promise<ISipProvider> {
+        if (this.provider) return this.provider;
+        if (this.options.provider === 'jssip') {
+            const { JsSIPProvider } = await import("./core/jssip-provider.js");
+            this.provider = new JsSIPProvider();
+        } else {
+            const { SipJSProvider } = await import("./core/sipjs-provider.js");
+            this.provider = new SipJSProvider();
         }
+        return this.provider;
+    }
+
+    private async getProvider(): Promise<ISipProvider> {
+        return this.provider ?? this.providerReady;
     }
 
     // ─── Friendly aliases ────────────────────────────────────────────────────
@@ -194,10 +217,26 @@ export class SipClient {
     }
 
     private handleOnline = () => {
-        if (!this.intentionalDisconnect && this.connectionState === 'disconnected') {
-            this.onSipLog?.("info", "sip.Client", "", "Conectividade de rede restaurada. Tentando reconectar...");
-            this.triggerReconnection();
+        if (!this.started || this.intentionalDisconnect) return;
+
+        if (this.connectionState === 'connected' || this.connectionState === 'registered') {
+            // The network changed under a socket that still looks fine; make sure it really is.
+            // One failed ping is enough here, there is no point waiting for a second one.
+            this.pingFailures = PING_FAILURES_BEFORE_RECONNECT - 1;
+            this.checkHealth().catch(() => undefined);
+            return;
         }
+        if (this.connectionState !== 'disconnected') return;
+
+        // Being back online is new information: retry right away, even if the previous
+        // outage had already used up every attempt.
+        this.onSipLog?.("info", "sip.Client", "", "Conectividade de rede restaurada. Tentando reconectar...");
+        this.reconnectAttempt = 0;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
+        this.triggerReconnection();
     };
 
     // ─── Session management ──────────────────────────────────────────────────
@@ -254,11 +293,14 @@ export class SipClient {
     }
 
     private async doRegister(): Promise<SipRegisterResult> {
+        const provider = await this.getProvider();
         this.setupNetworkMonitoring();
         this.intentionalDisconnect = false;
+        this.started = true;
+        this.startHealthTimer();
 
-        if (this.connectionState === 'registered' && this.provider.refreshRegistration) {
-            await this.provider.refreshRegistration();
+        if (this.connectionState === 'registered' && provider.refreshRegistration) {
+            await provider.refreshRegistration();
             this.scheduleRegistrationExpiry();
             return this.getRegisterResult();
         }
@@ -267,7 +309,7 @@ export class SipClient {
 
         try {
             if (this.connectionState !== 'disconnected') {
-                await this.provider.unregister();
+                await provider.unregister();
             }
         } catch (_) { /* no active UA yet */ }
 
@@ -282,7 +324,8 @@ export class SipClient {
                 this.setConnectionState('disconnected');
                 this.onUserAgent.onDisconnect?.(error);
                 this.emitter.emit('disconnect', error);
-                if (!this.intentionalDisconnect && this.autoReconnect) {
+                // While a reconnect attempt is running it owns the retry (it may be the one dropping the socket).
+                if (!this.intentionalDisconnect && this.autoReconnect && !this.reconnecting) {
                     this.onSipLog?.("warn", "sip.Client", "", "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
                     this.triggerReconnection();
                 }
@@ -335,16 +378,7 @@ export class SipClient {
         };
 
         const internalRegisterDelegate: ISipRegisterDelegate = {
-            onAccept: (data) => {
-                this.setConnectionState('registered');
-                this.reconnectAttempt = 0;
-                this.scheduleRegistrationExpiry();
-                this.onRegister.onAccept?.(data);
-                this.emitter.emit('registered');
-                this.restorePresenceSubscriptions().catch(error => {
-                    this.onSipLog?.('warn', 'sip.Client', '', `Falha ao restaurar inscrições de presença: ${error}`);
-                });
-            },
+            onAccept: (data) => this.handleRegistered(data),
             onReject: (error) => {
                 this.setConnectionState('error');
                 this.onRegister.onReject?.(error);
@@ -352,10 +386,22 @@ export class SipClient {
             },
             onTrying: () => this.onRegister.onTrying?.(),
             onRedirect: (data) => this.onRegister.onRedirect?.(data),
+            onUnregistered: () => {
+                if (this.intentionalDisconnect) return;
+                if (this.connectionState === 'registered') this.setConnectionState('connected');
+                this.onRegister.onUnregistered?.();
+                this.emitter.emit('unregistered');
+                if (this.autoReconnect && !this.reconnecting) {
+                    // The binding lapsed on a socket that still looks connected, which usually
+                    // means the socket is dead: replace it instead of registering over it.
+                    this.onSipLog?.("warn", "sip.Client", "", "Registro SIP perdido. Iniciando tentativas de reconexão...");
+                    this.triggerReconnection(true);
+                }
+            },
         };
 
         try {
-            await this.provider.register(
+            await provider.register(
                 this.credentials,
                 internalUserAgentDelegate,
                 internalRegisterDelegate,
@@ -369,10 +415,30 @@ export class SipClient {
         return this.getRegisterResult();
     }
 
+    /**
+     * Presence subscriptions die with the registration/socket they were created on, so
+     * they are restored whenever the client goes from not registered to registered —
+     * but not on the periodic refreshes of a registration that never dropped.
+     */
+    private handleRegistered(data?: unknown) {
+        const wasRegistered = this.connectionState === 'registered';
+        this.setConnectionState('registered');
+        this.reconnectAttempt = 0;
+        this.pingFailures = 0;
+        this.scheduleRegistrationExpiry();
+        this.onRegister.onAccept?.(data);
+        this.emitter.emit('registered');
+        if (wasRegistered) return;
+        this.restorePresenceSubscriptions().catch(error => {
+            this.onSipLog?.('warn', 'sip.Client', '', `Falha ao restaurar inscrições de presença: ${error}`);
+        });
+    }
+
     async refreshRegistration(): Promise<void> {
         return this.enqueue(async () => {
-            if (this.provider.refreshRegistration) {
-                await this.provider.refreshRegistration();
+            const provider = await this.getProvider();
+            if (provider.refreshRegistration) {
+                await provider.refreshRegistration();
             } else {
                 await this.doRegister();
                 return;
@@ -390,15 +456,22 @@ export class SipClient {
             this.sessions = [];
             this.activeSessionId = undefined;
             this.clearTimers();
-            try { await this.provider.unregister(); } catch (_) { }
+            try { await (await this.getProvider()).unregister(); } catch (_) { }
             this.credentials = credentials;
             this.connectionState = 'disconnected';
             return this.doRegister();
         });
     }
 
+    /**
+     * Fallback for custom providers only. The built-in ones renew REGISTER themselves, timed
+     * by the expiry the registrar actually granted; a second timer here would just send a
+     * duplicate REGISTER that can collide with theirs.
+     */
     private scheduleRegistrationExpiry() {
         if (this.registrationExpiryTimer) clearTimeout(this.registrationExpiryTimer);
+        this.registrationExpiryTimer = undefined;
+        if (this.provider?.managesRegistrationRefresh) return;
         const delay = Math.max(5, 3600 - this.registrationExpiringBuffer) * 1000;
         this.registrationExpiryTimer = setTimeout(() => {
             this.registrationExpiryTimer = undefined;
@@ -415,49 +488,60 @@ export class SipClient {
     }
 
     private getRegisterResult(): SipRegisterResult {
-        if (this.provider instanceof SipJSProvider) {
-            return {
-                userAgent: this.provider.getUserAgent(),
-                registerer: this.provider.getRegisterer(),
-            };
-        }
-
-        if (this.provider instanceof JsSIPProvider) {
-            return {
-                userAgent: this.provider.getUA() ?? this.provider,
-                registerer: null,
-            };
-        }
-
-        return { userAgent: this.provider, registerer: null };
+        return this.provider?.getRegisterResult?.() ?? { userAgent: this.provider, registerer: null };
     }
 
     // ─── Reconnect / health ──────────────────────────────────────────────────
 
     async reconnect(): Promise<void> {
+        this.intentionalDisconnect = false;
         return this.enqueue(() => this.doReconnect());
     }
 
     private async doReconnect(): Promise<void> {
-        this.intentionalDisconnect = false;
-        this.setConnectionState('connecting');
-        if (this.provider.reconnect) {
-            await this.provider.reconnect();
-            this.setConnectionState('registered');
-            this.reconnectAttempt = 0;
-            this.scheduleRegistrationExpiry();
-            return;
+        if (this.intentionalDisconnect) return;
+        const force = this.forceNextReconnect;
+        this.forceNextReconnect = false;
+        const provider = await this.getProvider();
+        this.reconnecting = true;
+
+        try {
+            this.setConnectionState('connecting');
+            if (!provider.reconnect) {
+                await provider.unregister().catch(() => {});
+                await this.doRegister();
+                return;
+            }
+            // Resolves only once registered again. Providers that report it through the
+            // register delegate have already moved the state by now.
+            await provider.reconnect({ force });
+            if (this.connectionState !== 'registered') this.handleRegistered();
+        } catch (error) {
+            const websocketUp = provider.getHealth?.().websocketConnected ?? false;
+            this.setConnectionState(websocketUp ? 'connected' : 'disconnected');
+            throw error;
+        } finally {
+            this.reconnecting = false;
         }
-        await this.provider.unregister().catch(() => {});
-        await this.doRegister();
+    }
+
+    private startHealthTimer() {
+        const interval = this.options.healthCheckIntervalMs;
+        if (!interval || this.healthTimer) return;
+        this.healthTimer = setInterval(() => {
+            this.checkHealth().catch(() => undefined);
+        }, interval);
     }
 
     async checkHealth(): Promise<SipHealthStatus> {
-        const providerHealth = this.provider.getHealth?.() ?? {};
+        const provider = await this.getProvider();
+        const providerHealth = provider.getHealth?.() ?? {};
         let pingResult: { ok: boolean; latencyMs?: number; error?: string } | undefined;
 
-        if (this.provider.ping && this.connectionState !== 'disconnected') {
-            pingResult = await this.provider.ping();
+        const online = this.connectionState === 'connected' || this.connectionState === 'registered';
+        if (provider.ping && online && !this.reconnecting) {
+            pingResult = await provider.ping();
+            this.handlePingResult(pingResult.ok);
         }
 
         const status: SipHealthStatus = {
@@ -475,28 +559,49 @@ export class SipClient {
         return status;
     }
 
-    private getReconnectDelay(attempt: number): number {
-        return Math.min(
-            this.reconnectDelay * Math.pow(2, attempt - 1),
-            this.maxReconnectDelay
-        );
+    private handlePingResult(ok: boolean) {
+        if (ok) {
+            this.pingFailures = 0;
+            return;
+        }
+        this.pingFailures += 1;
+        if (this.pingFailures < PING_FAILURES_BEFORE_RECONNECT) return;
+        this.pingFailures = 0;
+        if (!this.started || this.intentionalDisconnect || !this.autoReconnect) return;
+        this.onSipLog?.("warn", "sip.Client", "", "PBX não responde ao ping SIP. Refazendo a conexão...");
+        this.triggerReconnection(true);
     }
 
-    private triggerReconnection() {
-        if (this.reconnectTimer || !this.autoReconnect) return;
+    /**
+     * The first retry is quick, since most drops are short blips. After that the wait
+     * doubles from `reconnectDelay` up to `maxReconnectDelay`, with jitter so a PBX
+     * restart doesn't bring every client back in the same instant.
+     */
+    private getReconnectDelay(attempt: number): number {
+        if (attempt <= 1) return Math.min(this.reconnectDelay, FIRST_RECONNECT_DELAY_MS);
+        const backoff = Math.min(this.reconnectDelay * Math.pow(2, attempt - 2), this.maxReconnectDelay);
+        return Math.min(this.maxReconnectDelay, Math.round(backoff * (0.85 + Math.random() * 0.3)));
+    }
+
+    private triggerReconnection(force = false) {
+        if (force) this.forceNextReconnect = true;
+        if (this.reconnectTimer || this.reconnecting || !this.autoReconnect || this.intentionalDisconnect) return;
         if (this.reconnectAttempt >= this.maxReconnectAttempts) {
             this.onSipLog?.("error", "sip.Client", "", `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`);
+            this.emitter.emit('reconnect-failed', this.reconnectAttempt);
             return;
         }
 
         const nextAttempt = this.reconnectAttempt + 1;
         const delay = this.getReconnectDelay(nextAttempt);
+        this.emitter.emit('reconnecting', nextAttempt, delay);
         this.reconnectTimer = setTimeout(async () => {
             this.reconnectTimer = undefined;
+            if (this.intentionalDisconnect) return;
             this.reconnectAttempt = nextAttempt;
             this.onSipLog?.("info", "sip.Client", "", `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
             try {
-                await this.reconnect();
+                await this.enqueue(() => this.doReconnect());
             } catch (error) {
                 this.onSipLog?.("error", "sip.Client", "", `Falha na tentativa de reconexão: ${error}`);
                 this.triggerReconnection();
@@ -507,24 +612,26 @@ export class SipClient {
     // ─── Presence / BLF ──────────────────────────────────────────────────────
 
     async subscribePresence(target: string, options?: PresenceSubscribeOptions): Promise<void> {
-        if (!this.provider.subscribePresence) {
+        const provider = await this.getProvider();
+        if (!provider.subscribePresence) {
             throw new Error("Presence subscription is not supported by the selected SIP provider.");
         }
         this.presenceSubscriptions.set(target, options);
-        await this.provider.subscribePresence(target, options);
+        await provider.subscribePresence(target, options);
     }
 
     async unsubscribePresence(target: string): Promise<void> {
         this.presenceSubscriptions.delete(target);
-        if (!this.provider.unsubscribePresence) return;
-        await this.provider.unsubscribePresence(target);
+        const provider = await this.getProvider();
+        await provider.unsubscribePresence?.(target);
     }
 
     private async restorePresenceSubscriptions(): Promise<void> {
-        if (!this.provider.subscribePresence || this.presenceSubscriptions.size === 0) return;
-        for (const [target, options] of this.presenceSubscriptions.entries()) {
-            await this.provider.subscribePresence(target, options).catch(() => undefined);
-        }
+        const provider = await this.getProvider();
+        if (!provider.subscribePresence || this.presenceSubscriptions.size === 0) return;
+        await Promise.all([...this.presenceSubscriptions.entries()].map(
+            ([target, options]) => provider.subscribePresence!(target, options).catch(() => undefined)
+        ));
     }
 
     onPresence(listener: (presence: PresenceEvent) => void): this {
@@ -533,53 +640,43 @@ export class SipClient {
 
     // ─── Sounds ──────────────────────────────────────────────────────────────
 
-    private playRingtone() {
+    private playRingtone() { this.playSound('ringtone'); }
+    private stopRingtone() { this.stopSound('ringtone'); }
+    private playRingback() { this.playSound('ringback'); }
+    private stopRingback() { this.stopSound('ringback'); }
+
+    private playSound(kind: 'ringtone' | 'ringback') {
         if (typeof window === 'undefined') return;
-        if (this.options.sounds?.ringtone) {
-            try {
-                if (!this.ringtoneAudio) {
-                    this.ringtoneAudio = new Audio(this.options.sounds.ringtone);
-                    this.ringtoneAudio.loop = true;
-                }
-                this.ringtoneAudio.currentTime = 0;
-                this.ringtoneAudio.play().catch(() => this.synthesizer.playRingtone());
-            } catch {
-                this.synthesizer.playRingtone();
+        const sounds = this.options.sounds;
+        const source = sounds === false ? false : sounds?.[kind];
+        if (source === false) return;
+
+        const synthesizer = this.synthesizers[kind];
+        const synthesize = () => kind === 'ringtone' ? synthesizer.playRingtone() : synthesizer.playRingback();
+        if (!source) {
+            synthesize();
+            return;
+        }
+
+        try {
+            let audio = this.soundElements[kind];
+            if (!audio) {
+                audio = new Audio(source);
+                audio.loop = true;
+                this.soundElements[kind] = audio;
             }
-        } else {
-            this.synthesizer.playRingtone();
+            audio.currentTime = 0;
+            audio.play().catch(synthesize);
+        } catch {
+            synthesize();
         }
     }
 
-    private stopRingtone() {
-        this.synthesizer.stop();
-        if (this.ringtoneAudio) {
-            try { this.ringtoneAudio.pause(); this.ringtoneAudio.currentTime = 0; } catch (_) {}
-        }
-    }
-
-    private playRingback() {
-        if (typeof window === 'undefined') return;
-        if (this.options.sounds?.ringback) {
-            try {
-                if (!this.ringbackAudio) {
-                    this.ringbackAudio = new Audio(this.options.sounds.ringback);
-                    this.ringbackAudio.loop = true;
-                }
-                this.ringbackAudio.currentTime = 0;
-                this.ringbackAudio.play().catch(() => this.synthesizer.playRingback());
-            } catch {
-                this.synthesizer.playRingback();
-            }
-        } else {
-            this.synthesizer.playRingback();
-        }
-    }
-
-    private stopRingback() {
-        this.synthesizer.stop();
-        if (this.ringbackAudio) {
-            try { this.ringbackAudio.pause(); this.ringbackAudio.currentTime = 0; } catch (_) {}
+    private stopSound(kind: 'ringtone' | 'ringback') {
+        this.synthesizers[kind].stop();
+        const audio = this.soundElements[kind];
+        if (audio) {
+            try { audio.pause(); audio.currentTime = 0; } catch (_) {}
         }
     }
 
@@ -637,23 +734,25 @@ export class SipClient {
     async call(options: CallOptions): Promise<ISipSession> {
         this.playRingback();
         try {
-            const session = await this.provider.call(options);
-            session.on?.('progress', event => {
-                if (event?.hasEarlyMedia || event?.statusCode === 183) this.stopRingback();
-            });
-            session.on?.('established', () => this.stopRingback());
-            session.on?.('failed', () => this.stopRingback());
-            session.on?.('terminated', () => this.stopRingback());
-
-            const originalOnTerminate = session.onTerminate;
-            session.onTerminate = () => {
-                this.stopRingback();
-                originalOnTerminate?.();
-            };
-
-            session.onConfirm = () => {
-                this.stopRingback();
-            };
+            const session = await (await this.getProvider()).call(options);
+            if (session.on) {
+                session.on('progress', event => {
+                    if (event?.hasEarlyMedia || event?.statusCode === 183) this.stopRingback();
+                });
+                session.on('established', () => this.stopRingback());
+                session.on('failed', () => this.stopRingback());
+                session.on('terminated', () => this.stopRingback());
+            } else {
+                // Custom providers without an event bus only have the legacy callbacks.
+                const originalOnTerminate = session.onTerminate;
+                session.onTerminate = () => {
+                    this.stopRingback();
+                    originalOnTerminate?.();
+                };
+                session.onConfirm = () => {
+                    this.stopRingback();
+                };
+            }
 
             this.trackSession(session);
             return session;
@@ -665,7 +764,7 @@ export class SipClient {
 
     async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
         this.stopRingtone();
-        const session = await this.provider.answer(invitation, options);
+        const session = await (await this.getProvider()).answer(invitation, options);
         this.trackSession(session);
         return session;
     }
@@ -754,7 +853,7 @@ export class SipClient {
     }
 
     async sendMessage(destination: string, body: string): Promise<void> {
-        await this.provider.sendMessage(destination, body);
+        await (await this.getProvider()).sendMessage(destination, body);
     }
 
     // ─── Unregister / cleanup ────────────────────────────────────────────────
@@ -765,6 +864,7 @@ export class SipClient {
 
     private async doUnregister(): Promise<void> {
         this.intentionalDisconnect = true;
+        this.started = false;
         this.clearTimers();
         this.stopAllSounds();
         this.cleanupNetworkMonitoring();
@@ -773,7 +873,7 @@ export class SipClient {
             try { await session.bye(); } catch (_) { /* continue */ }
         }
 
-        await this.provider.unregister();
+        await (await this.getProvider()).unregister();
         this.sessions = [];
         this.activeSessionId = undefined;
         this.setConnectionState('disconnected');
@@ -793,13 +893,17 @@ export class SipClient {
             this.healthTimer = undefined;
         }
         this.reconnectAttempt = 0;
+        this.forceNextReconnect = false;
+        this.pingFailures = 0;
     }
 }
 
 export * from "./core/types.js";
 export * from "./core/provider.js";
-export * from "./core/sipjs-provider.js";
-export * from "./core/jssip-provider.js";
+// Types only: the provider classes live in their own entry points (`easy-sipjs/sipjs`,
+// `easy-sipjs/jssip`) so this one doesn't pull both SIP stacks into every bundle.
+export type { SipJSProvider, SipJSSession } from "./core/sipjs-provider.js";
+export type { JsSIPProvider, JsSIPSession } from "./core/jssip-provider.js";
 export * from "./core/event-emitter.js";
 export * from "./core/device-manager.js";
 export * from "./core/call-quality.js";
@@ -818,6 +922,7 @@ export function createSoftphone(config: CreateSoftphoneConfig): SipClient {
             authorizationUsername: config.authUsername,
             server: config.websocketUrl,
             iceServers: config.iceServers,
+            iceGatheringTimeoutMs: config.iceGatheringTimeoutMs,
             debug: config.debug ?? false,
             userAgentString: `easy-sipjs/${preset}`,
         },

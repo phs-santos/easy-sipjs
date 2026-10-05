@@ -1,135 +1,49 @@
+interface Tone {
+    frequencies: number[];
+    volume: number;
+    onMs: number;
+    offMs: number;
+}
+
+// US/standard ringback: 440Hz + 480Hz, 2 seconds on, 4 seconds off.
+const RINGBACK: Tone = { frequencies: [440, 480], volume: 0.08, onMs: 2000, offMs: 4000 };
+// Dual-tone ring (400Hz + 450Hz), 1.5 seconds on, 3 seconds off.
+const RINGTONE: Tone = { frequencies: [400, 450], volume: 0.12, onMs: 1500, offMs: 3000 };
+
+// One context for every synthesizer: creating an AudioContext per ring spins up
+// an audio thread each time and browsers cap how many may exist. It is
+// suspended while nothing plays so the audio thread goes idle.
+let sharedContext: AudioContext | undefined;
+let activeVoices = 0;
+
+function acquireContext(): AudioContext | undefined {
+    if (sharedContext) return sharedContext;
+    if (typeof window === "undefined") return undefined;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) sharedContext = new AudioCtx();
+    return sharedContext;
+}
+
 /**
  * Synthesizes telephone tones natively in the browser using the Web Audio API.
  * This completely eliminates the need for hosting/loading heavy sound files (.mp3/.wav) in basic scenarios.
  */
 export class SipAudioSynthesizer {
-    private ctx?: AudioContext;
     private oscillators: OscillatorNode[] = [];
     private gainNode?: GainNode;
     private timer?: ReturnType<typeof setTimeout>;
     private isPlaying = false;
 
-    constructor() {}
-
-    private initContext() {
-        if (this.ctx || typeof window === "undefined") return;
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (AudioCtx) {
-            this.ctx = new AudioCtx();
-        }
-    }
-
-    public playRingback() {
-        if (this.isPlaying) return;
-        this.initContext();
-        if (!this.ctx) return;
-        this.isPlaying = true;
-
-        const playTone = () => {
-            if (!this.ctx || !this.isPlaying) return;
-            
-            if (this.ctx.state === "suspended") {
-                this.ctx.resume();
-            }
-
-            // Create oscillators for 440Hz and 480Hz (US/Standard Ringback frequencies)
-            const osc1 = this.ctx.createOscillator();
-            const osc2 = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-
-            osc1.type = "sine";
-            osc1.frequency.value = 440;
-
-            osc2.type = "sine";
-            osc2.frequency.value = 480;
-
-            // Reduce volume so it's a pleasant background sound
-            gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
-            
-            osc1.connect(gain);
-            osc2.connect(gain);
-            gain.connect(this.ctx.destination);
-
-            osc1.start();
-            osc2.start();
-
-            this.oscillators = [osc1, osc2];
-            this.gainNode = gain;
-
-            // US Ringback: 2 seconds on, 4 seconds off
-            setTimeout(() => {
-                this.stopOscillators();
-                if (this.isPlaying) {
-                    this.timer = setTimeout(playTone, 4000);
-                }
-            }, 2000);
-        };
-
-        playTone();
-    }
-
-    public playRingtone() {
-        if (this.isPlaying) return;
-        this.initContext();
-        if (!this.ctx) return;
-        this.isPlaying = true;
-
-        const playTone = () => {
-            if (!this.ctx || !this.isPlaying) return;
-            
-            if (this.ctx.state === "suspended") {
-                this.ctx.resume();
-            }
-
-            // Dual tone European/US ring tone (400Hz + 450Hz) repeating cadence
-            const osc1 = this.ctx.createOscillator();
-            const osc2 = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-
-            osc1.type = "sine";
-            osc1.frequency.value = 400;
-
-            osc2.type = "sine";
-            osc2.frequency.value = 450;
-
-            gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
-
-            osc1.connect(gain);
-            osc2.connect(gain);
-            gain.connect(this.ctx.destination);
-
-            osc1.start();
-            osc2.start();
-
-            this.oscillators = [osc1, osc2];
-            this.gainNode = gain;
-
-            // Ring tone cadence: 1.5 seconds on, 3 seconds off
-            setTimeout(() => {
-                this.stopOscillators();
-                if (this.isPlaying) {
-                    this.timer = setTimeout(playTone, 3000);
-                }
-            }, 1500);
-        };
-
-        playTone();
-    }
+    public playRingback() { this.play(RINGBACK); }
+    public playRingtone() { this.play(RINGTONE); }
 
     public stop() {
+        if (!this.isPlaying) return;
         this.isPlaying = false;
         if (this.timer) {
             clearTimeout(this.timer);
             this.timer = undefined;
         }
-        this.stopOscillators();
-        if (this.ctx) {
-            this.ctx.close().catch(() => {});
-            this.ctx = undefined;
-        }
-    }
-
-    private stopOscillators() {
         this.oscillators.forEach(osc => {
             try {
                 osc.stop();
@@ -137,11 +51,45 @@ export class SipAudioSynthesizer {
             } catch (e) {}
         });
         this.oscillators = [];
-        if (this.gainNode) {
-            try {
-                this.gainNode.disconnect();
-            } catch (e) {}
-            this.gainNode = undefined;
+        try { this.gainNode?.disconnect(); } catch (e) {}
+        this.gainNode = undefined;
+
+        activeVoices = Math.max(0, activeVoices - 1);
+        if (activeVoices === 0 && sharedContext?.state === "running") {
+            void sharedContext.suspend().catch(() => {});
         }
+    }
+
+    private play(tone: Tone) {
+        if (this.isPlaying) return;
+        const ctx = acquireContext();
+        if (!ctx) return;
+        this.isPlaying = true;
+        activeVoices += 1;
+        if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+
+        // The oscillators run for the whole ring; the cadence is just the gain
+        // opening and closing, so there is a single timer to cancel on stop().
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        gain.connect(ctx.destination);
+        this.gainNode = gain;
+        this.oscillators = tone.frequencies.map(frequency => {
+            const osc = ctx.createOscillator();
+            osc.type = "sine";
+            osc.frequency.value = frequency;
+            osc.connect(gain);
+            osc.start();
+            return osc;
+        });
+
+        const cycle = () => {
+            if (!this.isPlaying) return;
+            const now = ctx.currentTime;
+            gain.gain.setValueAtTime(tone.volume, now);
+            gain.gain.setValueAtTime(0, now + tone.onMs / 1000);
+            this.timer = setTimeout(cycle, tone.onMs + tone.offMs);
+        };
+        cycle();
     }
 }

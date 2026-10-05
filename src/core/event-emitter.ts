@@ -7,6 +7,9 @@ export type SipEventMap = {
     registered: [];
     'register-failed': [error?: unknown];
     'registration-expiring': [];
+    unregistered: [];
+    reconnecting: [attempt: number, delayMs: number];
+    'reconnect-failed': [attempts: number];
     invite: [invitation: SipInvitation];
     message: [message: unknown];
     notify: [notification: unknown];

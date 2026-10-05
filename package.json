@@ -9,6 +9,14 @@
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
 		},
+		"./sipjs": {
+			"types": "./dist/sipjs.d.ts",
+			"default": "./dist/sipjs.js"
+		},
+		"./jssip": {
+			"types": "./dist/jssip.d.ts",
+			"default": "./dist/jssip.js"
+		},
 		"./vue": {
 			"types": "./dist/vue/useSipClient.d.ts",
 			"default": "./dist/vue/useSipClient.js"
@@ -21,6 +29,7 @@
 		"CHANGELOG.md"
 	],
 	"type": "module",
+	"sideEffects": false,
 	"scripts": {
 		"build": "tsc && npm run bundle",
 		"bundle": "esbuild src/index.ts --bundle --minify --sourcemap --format=iife --global-name=EasySip --outfile=dist/easy-sip.min.js",

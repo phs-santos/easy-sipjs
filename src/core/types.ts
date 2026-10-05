@@ -22,8 +22,21 @@ export interface SipCredentials {
     server?: string;
     userAgentString?: string;
     iceServers?: RTCIceServer[];
+    /** How long to wait for ICE candidates before sending the SDP anyway. Defaults to 1000ms
+     *  (the SIP stacks' own default is to wait up to 5s, or forever, when a STUN/TURN server
+     *  does not answer). Raise it if a slow TURN server needs longer to allocate a relay. */
+    iceGatheringTimeoutMs?: number;
+    /** Extra parameters for the Contact URI (`sipjs` provider). Defaults to `{ transport: 'ws' }`,
+     *  which is what registrars echo back for WebSocket clients. */
+    contactParams?: { [name: string]: string };
     debug?: boolean;
 }
+
+/** `false` disables a sound; a string is the URL of a file to loop; omitted uses the built-in synthesized tone. */
+export type SoftphoneSounds = false | {
+    ringtone?: string | false;
+    ringback?: string | false;
+};
 
 export interface MediaElements {
     localElement?: HTMLMediaElement;
@@ -39,6 +52,9 @@ export interface CallOptions extends MediaElements {
     destination: string;
     video?: boolean;
     extraHeaders?: string[];
+    /** Applies the SDP of a 183 Session Progress so the remote side's audio (ringback,
+     *  announcements) plays on `remoteElement` before the call is answered. */
+    earlyMedia?: boolean;
 }
 
 export type SipConnectionState = 'connecting' | 'connected' | 'registered' | 'disconnected' | 'error';
@@ -256,10 +272,8 @@ export interface CreateSoftphoneConfig {
     displayName?: string;
     authUsername?: string;
     iceServers?: RTCIceServer[];
+    iceGatheringTimeoutMs?: number;
     debug?: boolean;
     provider?: 'sipjs' | 'jssip';
-    sounds?: {
-        ringtone?: string;
-        ringback?: string;
-    };
+    sounds?: SoftphoneSounds;
 }

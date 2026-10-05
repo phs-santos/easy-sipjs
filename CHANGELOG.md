@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.0.0] - 2026-10-04
+
+### Alterado (pode exigir ajuste)
+- `SipJSProvider`, `SipJSSession`, `JsSIPProvider` e `JsSIPSession` saíram do entry principal e passaram para `easy-sipjs/sipjs` e `easy-sipjs/jssip`. O entry principal continua exportando os tipos. Cada stack SIP agora é carregada sob demanda: com `provider: 'sipjs'` o bundle do app cai de ~553 KB para ~301 KB minificado.
+- `connect()`/`register()` só resolvem depois do 200 OK do REGISTER e rejeitam quando o registro é recusado ou não tem resposta (o erro traz `statusCode` e `reasonPhrase`). Antes resolviam assim que o REGISTER era enviado.
+- `hold()`, `unhold()`, `upgradeToVideo()` e `downgradeToAudio()` (SIP.js) esperam o outro lado aceitar o re-INVITE, rejeitam se ele recusar e lançam erro se já houver outro re-INVITE em andamento, em vez de retornar sem fazer nada.
+- O refresh do REGISTER fica só com o SIP.js/JsSIP, no prazo concedido pelo servidor. O timer fixo de 3600 s, que mandava um REGISTER duplicado, agora só roda para `customProvider` sem `managesRegistrationRefresh`; `registration-expiring`/`onExpiring` seguem a mesma regra.
+- O Contact do provider SIP.js usa `transport=ws` (padrão do SIP.js) em vez de `wss`, que fazia o 200 OK do REGISTER ser descartado em alguns PBXs. Configurável em `contactParams`.
+- Presença/BLF em `dialog-info`: ramal sem diálogo ativo (`terminated`) é `available`, não `offline`; `early` é `ringing`.
+- `setRemoteVolume()` usa o volume do elemento de 0 a 1 e só cria o ganho Web Audio acima de 1.
+
+### Adicionado
+- `iceGatheringTimeoutMs` (padrão 1000 ms) nas credenciais e em `createSoftphone()`: limita a espera por candidatos ICE, que era de até 5 s no SIP.js e sem limite no JsSIP.
+- `earlyMedia` em `CallOptions`: aplica o SDP do 183 e toca o áudio do PBX antes do atendimento.
+- `sounds: false` (ou `false` por som) para o app cuidar dos próprios toques.
+- Eventos `reconnecting`, `reconnect-failed` e `unregistered`.
+- `CallStatsSampler` e o campo `note` em `PresenceEvent`.
+
+### Corrigido
+- O stream remoto é ligado ao elemento assim que o handler de mídia existe, não só em `Established`.
+- `failed` sai antes de `terminated` em chamadas recusadas, e `terminated` leva o código SIP.
+- Reconexão: primeira tentativa em até 500 ms, backoff com jitter, e o evento `online` zera o contador (antes o cliente desistia para sempre depois de `maxReconnectAttempts`).
+- Health check: dois pings sem resposta derrubam o socket e reconectam; o timer não morre mais depois de `disconnect()`/`updateCredentials()`.
+- Depois de reconectar, o estado só vira `registered` com o registro confirmado, e as inscrições de presença são refeitas. No JsSIP elas não são mais refeitas a cada refresh do registro.
+- `unsubscribePresence('10')` não remove mais `100` ou `1010`.
+- `setRemoteVolume()` não deixa mais o elemento de áudio mudo na chamada seguinte.
+- Toques sintetizados: um `AudioContext` compartilhado em vez de um por toque, sem o timer solto que cortava o tom ao parar e tocar em seguida; toque e ringback não se cancelam mais.
+- JsSIP: áudio remoto em chamadas recebidas (o wrapper era criado depois do `peerconnection`).
+- Perda de pacotes de `getQuality()` é medida entre amostras, não acumulada desde o início; o codec reportado é o do áudio recebido.
+- Vue: `sessions` é `shallowRef`, `activeSession` atualiza, e o convite some quando quem ligou desiste.
+
 ## [2.7.0] - 2026-07-01
 
 ### Alterado
