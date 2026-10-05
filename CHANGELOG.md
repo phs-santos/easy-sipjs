@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.1.0] - 2026-10-05
+
+### Alterado
+- O preset `generic` passa a usar DTMF `auto` e a espera padrão do SIP.js; `asterisk`, `kamailio` e a ausência de preset continuam com SIP INFO e `a=inactive`.
+- SIP MESSAGE recebido (SIP.js) é respondido com 200 OK pela biblioteca. `message.accept()` continua existindo e não faz nada.
+- O pacote do npm não leva mais os sourcemaps do bundle IIFE (de 3,6 MB para ~750 KB) nem o `NPM.md`, que era idêntico ao README.
+
+### Adicionado
+- Presets com efeito real e opções `dtmfMode`, `holdStrategy` (`asterisk-inactive`, `asterisk-sendonly`, `sipjs-default`) e `mediaRecovery` no cliente.
+- Recuperação de mídia mais rápida: reinício de ICE depois de 3 s em `disconnected` (antes só em `failed`, 15 a 30 s depois) e `session.recoverMedia()`, que o cliente chama nas chamadas em andamento quando o WebSocket volta.
+- `uniqueContact` nas credenciais, para vários registros simultâneos no mesmo ramal.
+- `SipError` com `code` estável e `SipLogCode` no `label` das linhas de log do cliente.
+- Vue: `isMuted`, `isOnHold`, `setMuted()`, `setHeld()`, `hangup()` e `setActiveSession()` no composable.
+- ESLint (`npm run lint`), `npm run typecheck` e workflows do GitHub Actions: CI em push/PR e publicação no npm por tag com trusted publishing.
+
+### Corrigido
+- A recuperação de mídia avisa o SIP.js do reinício de ICE, que assim espera os candidatos novos antes de enviar a oferta.
+
 ## [3.0.0] - 2026-10-04
 
 ### Alterado (pode exigir ajuste)
@@ -10,9 +28,6 @@
 - O Contact do provider SIP.js usa `transport=ws` (padrão do SIP.js) em vez de `wss`, que fazia o 200 OK do REGISTER ser descartado em alguns PBXs. Configurável em `contactParams`.
 - Presença/BLF em `dialog-info`: ramal sem diálogo ativo (`terminated`) é `available`, não `offline`; `early` é `ringing`.
 - `setRemoteVolume()` usa o volume do elemento de 0 a 1 e só cria o ganho Web Audio acima de 1.
-- O preset `generic` passa a usar DTMF `auto` e a espera padrão do SIP.js; `asterisk`, `kamailio` e a ausência de preset continuam com SIP INFO e `a=inactive`.
-- SIP MESSAGE recebido (SIP.js) é respondido com 200 OK pela biblioteca. `message.accept()` continua existindo e não faz nada.
-- O pacote do npm não leva mais os sourcemaps do bundle IIFE (de 3,6 MB para ~750 KB) nem o `NPM.md`, que era idêntico ao README.
 
 ### Adicionado
 - `iceGatheringTimeoutMs` (padrão 1000 ms) nas credenciais e em `createSoftphone()`: limita a espera por candidatos ICE, que era de até 5 s no SIP.js e sem limite no JsSIP.
@@ -20,12 +35,6 @@
 - `sounds: false` (ou `false` por som) para o app cuidar dos próprios toques.
 - Eventos `reconnecting`, `reconnect-failed` e `unregistered`.
 - `CallStatsSampler` e o campo `note` em `PresenceEvent`.
-- Presets com efeito real e opções `dtmfMode`, `holdStrategy` (`asterisk-inactive`, `asterisk-sendonly`, `sipjs-default`) e `mediaRecovery` no cliente.
-- Recuperação de mídia mais rápida: reinício de ICE depois de 3 s em `disconnected` (antes só em `failed`, 15 a 30 s depois) e `session.recoverMedia()`, que o cliente chama nas chamadas em andamento quando o WebSocket volta.
-- `uniqueContact` nas credenciais, para vários registros simultâneos no mesmo ramal.
-- `SipError` com `code` estável e `SipLogCode` no `label` das linhas de log do cliente.
-- Vue: `isMuted`, `isOnHold`, `setMuted()`, `setHeld()`, `hangup()` e `setActiveSession()` no composable.
-- ESLint (`npm run lint`), `npm run typecheck` e workflows do GitHub Actions: CI em push/PR e publicação no npm por tag com trusted publishing.
 
 ### Corrigido
 - O stream remoto é ligado ao elemento assim que o handler de mídia existe, não só em `Established`.
@@ -38,7 +47,6 @@
 - Toques sintetizados: um `AudioContext` compartilhado em vez de um por toque, sem o timer solto que cortava o tom ao parar e tocar em seguida; toque e ringback não se cancelam mais.
 - JsSIP: áudio remoto em chamadas recebidas (o wrapper era criado depois do `peerconnection`).
 - Perda de pacotes de `getQuality()` é medida entre amostras, não acumulada desde o início; o codec reportado é o do áudio recebido.
-- A recuperação de mídia avisa o SIP.js do reinício de ICE, que assim espera os candidatos novos antes de enviar a oferta.
 - Vue: `sessions` é `shallowRef`, `activeSession` atualiza, e o convite some quando quem ligou desiste.
 
 ## [2.7.0] - 2026-07-01
