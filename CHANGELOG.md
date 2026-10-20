@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.1.1] - 2026-10-20
 
 ### Alterado
 - `npm run release` substitui `deploy` e `release:*`: pergunta o que commitar e a versão, roda lint/testes/build, cria o commit de release e a tag e faz o push; o GitHub Actions publica no npm. Pré-releases (`-beta.N`) saem com a dist-tag `beta`.
