@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Alterado
+- `npm run release` substitui `deploy` e `release:*`: pergunta o que commitar e a versão, roda lint/testes/build, cria o commit de release e a tag e faz o push; o GitHub Actions publica no npm. Pré-releases (`-beta.N`) saem com a dist-tag `beta`.
+
+### Removido
+- Exemplo `examples/softphone` do repositório.
+
 ## [3.1.0] - 2026-10-05
 
 ### Alterado

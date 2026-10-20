@@ -34,15 +34,10 @@
 	"scripts": {
 		"build": "tsc && npm run bundle",
 		"bundle": "esbuild src/index.ts --bundle --minify --sourcemap --format=iife --global-name=EasySip --outfile=dist/easy-sip.min.js",
-		"deploy": "npm run build && npm publish --access public",
 		"test": "vitest run",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit",
-		"release:patch": "npm run build && npm version patch -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
-		"release:minor": "npm run build && npm version minor -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
-		"release:major": "npm run build && npm version major -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
-		"release:beta": "npm run build && npm version prerelease --preid=beta -m \"chore(release): %s\" && git push origin main --tags && npm run release:gh",
-		"release:gh": "gh release create v$(node -p \"require('./package.json').version\") dist/easy-sip.min.js dist/easy-sip.min.js.map --generate-notes",
+		"release": "node scripts/release.js",
 		"version": "node scripts/update-readme-version.js && git add README.md",
 		"prepublishOnly": "npm run lint && npm test && npm run build"
 	},

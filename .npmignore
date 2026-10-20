@@ -4,4 +4,3 @@ tsconfig.json
 *.log
 .gitignore
 .npmignore
-examples/
