@@ -1,19 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SipClient, SipLogCode } from "../src/index.js";
-import type { ISipProvider, ISipRegisterDelegate, ISipUserAgentDelegate } from "../src/index.js";
+import type {
+    ISipProvider,
+    ISipRegisterDelegate,
+    ISipUserAgentDelegate,
+} from "../src/index.js";
 
-const credentials = { domain: "example.com", phone: "1000", secret: "x", server: "wss://example.com/ws" };
+const credentials = {
+    domain: "example.com",
+    phone: "1000",
+    secret: "x",
+    server: "wss://example.com/ws",
+};
 
 function createFakeProvider(overrides: Partial<ISipProvider> = {}) {
-    const delegates: { userAgent?: ISipUserAgentDelegate; register?: ISipRegisterDelegate } = {};
+    const delegates: {
+        userAgent?: ISipUserAgentDelegate;
+        register?: ISipRegisterDelegate;
+    } = {};
     const provider = {
         managesRegistrationRefresh: true,
-        register: vi.fn(async (_credentials: unknown, onUserAgent: ISipUserAgentDelegate, onRegister: ISipRegisterDelegate) => {
-            delegates.userAgent = onUserAgent;
-            delegates.register = onRegister;
-            onUserAgent.onConnect?.();
-            onRegister.onAccept?.();
-        }),
+        register: vi.fn(
+            async (
+                _credentials: unknown,
+                onUserAgent: ISipUserAgentDelegate,
+                onRegister: ISipRegisterDelegate
+            ) => {
+                delegates.userAgent = onUserAgent;
+                delegates.register = onRegister;
+                onUserAgent.onConnect?.();
+                onRegister.onAccept?.();
+            }
+        ),
         unregister: vi.fn().mockResolvedValue(undefined),
         call: vi.fn(),
         answer: vi.fn(),
@@ -28,12 +46,19 @@ function createFakeProvider(overrides: Partial<ISipProvider> = {}) {
 }
 
 describe("SipClient reconnection", () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("retries quickly after an unexpected drop and comes back registered", async () => {
         const { provider, delegates } = createFakeProvider();
-        const client = new SipClient(credentials, { customProvider: provider, reconnectDelay: 5000 });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            reconnectDelay: 5000,
+        });
         await client.connect();
         const registered = vi.fn();
         client.on("registered", registered);
@@ -49,8 +74,14 @@ describe("SipClient reconnection", () => {
     });
 
     it("backs off between failed attempts and reports when it gives up", async () => {
-        const { provider, delegates } = createFakeProvider({ reconnect: vi.fn().mockRejectedValue(new Error("still down")) });
-        const client = new SipClient(credentials, { customProvider: provider, reconnectDelay: 1000, maxReconnectAttempts: 3 });
+        const { provider, delegates } = createFakeProvider({
+            reconnect: vi.fn().mockRejectedValue(new Error("still down")),
+        });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            reconnectDelay: 1000,
+            maxReconnectAttempts: 3,
+        });
         await client.connect();
         const reconnecting = vi.fn();
         const gaveUp = vi.fn();
@@ -61,7 +92,9 @@ describe("SipClient reconnection", () => {
         await vi.advanceTimersByTimeAsync(60000);
 
         expect(provider.reconnect).toHaveBeenCalledTimes(3);
-        const delays = reconnecting.mock.calls.map(([, delay]) => delay as number);
+        const delays = reconnecting.mock.calls.map(
+            ([, delay]) => delay as number
+        );
         expect(delays[0]).toBe(500);
         expect(delays[1]).toBeGreaterThanOrEqual(850);
         expect(delays[2]).toBeGreaterThan(delays[1]);
@@ -99,13 +132,22 @@ describe("SipClient reconnection", () => {
 });
 
 describe("SipClient health check", () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("forces a reconnect after two failed pings in a row, and not after one", async () => {
-        const ping = vi.fn().mockResolvedValue({ ok: false, error: "OPTIONS ping timed out." });
+        const ping = vi
+            .fn()
+            .mockResolvedValue({ ok: false, error: "OPTIONS ping timed out." });
         const { provider } = createFakeProvider({ ping });
-        const client = new SipClient(credentials, { customProvider: provider, healthCheckIntervalMs: 30000 });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            healthCheckIntervalMs: 30000,
+        });
         await client.connect();
 
         await vi.advanceTimersByTimeAsync(30000);
@@ -120,7 +162,10 @@ describe("SipClient health check", () => {
     it("keeps checking after the client is disconnected and connected again", async () => {
         const ping = vi.fn().mockResolvedValue({ ok: true, latencyMs: 12 });
         const { provider } = createFakeProvider({ ping });
-        const client = new SipClient(credentials, { customProvider: provider, healthCheckIntervalMs: 30000 });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            healthCheckIntervalMs: 30000,
+        });
         await client.connect();
         await client.disconnect();
         await client.connect();
@@ -147,15 +192,25 @@ describe("SipClient presence", () => {
 
         delegates.userAgent!.onDisconnect?.();
         delegates.register!.onAccept?.(); // registered again after a drop
-        await vi.waitFor(() => expect(provider.subscribePresence).toHaveBeenCalledTimes(2));
-        expect(provider.subscribePresence).toHaveBeenCalledWith("1002", { event: "dialog" });
+        await vi.waitFor(() =>
+            expect(provider.subscribePresence).toHaveBeenCalledTimes(2)
+        );
+        expect(provider.subscribePresence).toHaveBeenCalledWith("1002", {
+            event: "dialog",
+        });
         await client.disconnect();
     });
 });
 
 describe("SipClient connect()", () => {
     it("rejects and reports 'error' when the provider cannot register", async () => {
-        const { provider } = createFakeProvider({ register: vi.fn().mockRejectedValue(new Error("REGISTER rejected with SIP 403 Forbidden.")) });
+        const { provider } = createFakeProvider({
+            register: vi
+                .fn()
+                .mockRejectedValue(
+                    new Error("REGISTER rejected with SIP 403 Forbidden.")
+                ),
+        });
         const client = new SipClient(credentials, { customProvider: provider });
 
         await expect(client.connect()).rejects.toThrow(/403/);
@@ -164,45 +219,77 @@ describe("SipClient connect()", () => {
 
     it("loads only the chosen SIP stack, on demand", async () => {
         const client = new SipClient(credentials, { provider: "jssip" });
-        const provider = await (client as unknown as { providerReady: Promise<{ constructor: { name: string } }> }).providerReady;
+        const provider = await (
+            client as unknown as {
+                providerReady: Promise<{ constructor: { name: string } }>;
+            }
+        ).providerReady;
         expect(provider.constructor.name).toBe("JsSIPProvider");
     });
 });
 
 describe("SipClient presets", () => {
-    const sessionDefaults = async (options: ConstructorParameters<typeof SipClient>[1], extraCredentials = {}) => {
+    const sessionDefaults = async (
+        options: ConstructorParameters<typeof SipClient>[1],
+        extraCredentials = {}
+    ) => {
         const { provider } = createFakeProvider();
-        const client = new SipClient({ ...credentials, ...extraCredentials }, { ...options, customProvider: provider });
+        const client = new SipClient(
+            { ...credentials, ...extraCredentials },
+            { ...options, customProvider: provider }
+        );
         await client.connect();
-        const { dtmfMode, holdStrategy } = provider.register.mock.calls[0][0] as { dtmfMode?: string; holdStrategy?: string };
+        const { dtmfMode, holdStrategy } = provider.register.mock
+            .calls[0][0] as { dtmfMode?: string; holdStrategy?: string };
         await client.disconnect();
         return { dtmfMode, holdStrategy };
     };
 
     it("behaves like Asterisk when no preset is given", async () => {
-        expect(await sessionDefaults({})).toEqual({ dtmfMode: "sip-info", holdStrategy: "asterisk-inactive" });
+        expect(await sessionDefaults({})).toEqual({
+            dtmfMode: "sip-info",
+            holdStrategy: "asterisk-inactive",
+        });
     });
 
     it("uses automatic DTMF and the standard hold for 'generic'", async () => {
-        expect(await sessionDefaults({ preset: "generic" })).toEqual({ dtmfMode: "auto", holdStrategy: "sipjs-default" });
+        expect(await sessionDefaults({ preset: "generic" })).toEqual({
+            dtmfMode: "auto",
+            holdStrategy: "sipjs-default",
+        });
     });
 
     it("lets explicit options win over the preset", async () => {
-        expect(await sessionDefaults({ preset: "generic", dtmfMode: "rtp-event" }, { holdStrategy: "asterisk-sendonly" }))
-            .toEqual({ dtmfMode: "rtp-event", holdStrategy: "asterisk-sendonly" });
+        expect(
+            await sessionDefaults(
+                { preset: "generic", dtmfMode: "rtp-event" },
+                { holdStrategy: "asterisk-sendonly" }
+            )
+        ).toEqual({ dtmfMode: "rtp-event", holdStrategy: "asterisk-sendonly" });
     });
 });
 
 describe("SipClient log codes and media recovery", () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("tags its own log lines with a stable code in the label", async () => {
-        const { provider, delegates } = createFakeProvider({ reconnect: vi.fn().mockRejectedValue(new Error("down")) });
-        const client = new SipClient(credentials, { customProvider: provider, maxReconnectAttempts: 1 });
+        const { provider, delegates } = createFakeProvider({
+            reconnect: vi.fn().mockRejectedValue(new Error("down")),
+        });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            maxReconnectAttempts: 1,
+        });
         await client.connect();
         const labels: string[] = [];
-        client.onSipLog = (_level, _category, label) => { labels.push(label); };
+        client.onSipLog = (_level, _category, label) => {
+            labels.push(label);
+        };
 
         delegates.userAgent!.onDisconnect?.(new Error("socket closed"));
         await vi.advanceTimersByTimeAsync(1000);
@@ -218,7 +305,9 @@ describe("SipClient log codes and media recovery", () => {
     it("asks ongoing calls to recover their media once signaling is back", async () => {
         const recoverMedia = vi.fn().mockResolvedValue(undefined);
         const fakeSession = { id: "s1", on: vi.fn(), recoverMedia };
-        const { provider, delegates } = createFakeProvider({ call: vi.fn().mockResolvedValue(fakeSession) });
+        const { provider, delegates } = createFakeProvider({
+            call: vi.fn().mockResolvedValue(fakeSession),
+        });
         const client = new SipClient(credentials, { customProvider: provider });
         await client.connect();
         await client.dial("1001");
@@ -230,19 +319,19 @@ describe("SipClient log codes and media recovery", () => {
     });
 });
 
-describe('SipClient lifecycle regression', () => {
-    it('ignores late transport and REGISTER callbacks after manual disconnect', async () => {
+describe("SipClient lifecycle regression", () => {
+    it("ignores late transport and REGISTER callbacks after manual disconnect", async () => {
         const { provider, delegates } = createFakeProvider();
         const client = new SipClient(credentials, { customProvider: provider });
         await client.connect();
         await client.disconnect();
         delegates.userAgent!.onConnect?.();
         delegates.register!.onAccept?.();
-        delegates.register!.onReject?.(new Error('late rejection'));
-        expect(client.getConnectionState()).toBe('disconnected');
+        delegates.register!.onReject?.(new Error("late rejection"));
+        expect(client.getConnectionState()).toBe("disconnected");
     });
 
-    it('ignores callbacks from a replaced registration', async () => {
+    it("ignores callbacks from a replaced registration", async () => {
         const { provider, delegates } = createFakeProvider();
         const client = new SipClient(credentials, { customProvider: provider });
         await client.connect();
@@ -250,9 +339,9 @@ describe('SipClient lifecycle regression', () => {
         const oldRegister = delegates.register!;
         await client.disconnect();
         await client.connect();
-        oldAgent.onDisconnect?.(new Error('old socket'));
-        oldRegister.onReject?.(new Error('old REGISTER'));
-        expect(client.getConnectionState()).toBe('registered');
+        oldAgent.onDisconnect?.(new Error("old socket"));
+        oldRegister.onReject?.(new Error("old REGISTER"));
+        expect(client.getConnectionState()).toBe("registered");
         await client.disconnect();
     });
 });

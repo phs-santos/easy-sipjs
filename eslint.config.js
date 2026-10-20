@@ -13,16 +13,19 @@ export default tseslint.config(
         rules: {
             // `catch (_) {}` around best-effort cleanup is deliberate throughout the library.
             "no-empty": ["error", { allowEmptyCatch: true }],
-            "@typescript-eslint/no-unused-vars": ["error", {
-                argsIgnorePattern: "^_",
-                varsIgnorePattern: "^_",
-                caughtErrorsIgnorePattern: "^(_|e)$",
-            }],
+            "@typescript-eslint/no-unused-vars": [
+                "error",
+                {
+                    argsIgnorePattern: "^_",
+                    varsIgnorePattern: "^_",
+                    caughtErrorsIgnorePattern: "^(_|e)$",
+                },
+            ],
         },
     },
     {
         // Fakes of SIP stack objects are loosely typed on purpose.
         files: ["test/**"],
         rules: { "@typescript-eslint/no-explicit-any": "off" },
-    },
+    }
 );

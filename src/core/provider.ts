@@ -18,11 +18,19 @@ export interface ISipProvider {
         credentials: SipCredentials,
         onUserAgent: ISipUserAgentDelegate,
         onRegister: ISipRegisterDelegate,
-        onSipLog?: (level: string, category: string, label: string, content: string) => void
+        onSipLog?: (
+            level: string,
+            category: string,
+            label: string,
+            content: string
+        ) => void
     ): Promise<void>;
 
     call(options: CallOptions): Promise<ISipSession>;
-    answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession>;
+    answer(
+        invitation: SipInvitation,
+        options: AnswerOptions
+    ): Promise<ISipSession>;
     unregister(): Promise<void>;
     sendMessage(destination: string, body: string): Promise<void>;
 
@@ -51,7 +59,10 @@ export interface ISipProvider {
     /** SIP/application-level ping. Provider may implement this as SIP OPTIONS or transport ping. */
     ping?(): Promise<{ ok: boolean; latencyMs?: number; error?: string }>;
 
-    subscribePresence?(target: string, options?: PresenceSubscribeOptions): Promise<void>;
+    subscribePresence?(
+        target: string,
+        options?: PresenceSubscribeOptions
+    ): Promise<void>;
     unsubscribePresence?(target: string): Promise<void>;
 }
 
@@ -68,8 +79,14 @@ export interface ISipSession {
     onHold?: () => void;
     onUnhold?: () => void;
 
-    on?<K extends keyof SipSessionEventMap>(event: K, listener: (...args: SipSessionEventMap[K]) => void): () => void;
-    off?<K extends keyof SipSessionEventMap>(event: K, listener: (...args: SipSessionEventMap[K]) => void): void;
+    on?<K extends keyof SipSessionEventMap>(
+        event: K,
+        listener: (...args: SipSessionEventMap[K]) => void
+    ): () => void;
+    off?<K extends keyof SipSessionEventMap>(
+        event: K,
+        listener: (...args: SipSessionEventMap[K]) => void
+    ): void;
 
     getCallDuration(): number;
 

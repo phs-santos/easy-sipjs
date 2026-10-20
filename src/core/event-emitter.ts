@@ -1,15 +1,23 @@
-import { PresenceEvent, SipConnectionState, SipHealthStatus, SipInvitation, SipResponseEvent, SipSessionEventMap, SipSessionStatus } from './types.js';
-import { ISipSession } from './provider.js';
+import {
+    PresenceEvent,
+    SipConnectionState,
+    SipHealthStatus,
+    SipInvitation,
+    SipResponseEvent,
+    SipSessionEventMap,
+    SipSessionStatus,
+} from "./types.js";
+import { ISipSession } from "./provider.js";
 
 export type SipEventMap = {
     connect: [];
     disconnect: [error?: Error];
     registered: [];
-    'register-failed': [error?: unknown];
-    'registration-expiring': [];
+    "register-failed": [error?: unknown];
+    "registration-expiring": [];
     unregistered: [];
     reconnecting: [attempt: number, delayMs: number];
-    'reconnect-failed': [attempts: number];
+    "reconnect-failed": [attempts: number];
     invite: [invitation: SipInvitation];
     message: [message: unknown];
     notify: [notification: unknown];
@@ -19,39 +27,81 @@ export type SipEventMap = {
     health: [status: SipHealthStatus];
     response: [event: SipResponseEvent];
     session: [session: ISipSession];
-    'session-state': [session: ISipSession, state: SipSessionStatus];
-    'session-progress': [session: ISipSession, event?: SipSessionEventMap['progress'][0]];
-    'session-established': [session: ISipSession];
-    'session-terminated': [session: ISipSession, event?: SipSessionEventMap['terminated'][0]];
-    'session-failed': [session: ISipSession, event: SipSessionEventMap['failed'][0]];
-    'session-hold': [session: ISipSession, event?: SipSessionEventMap['hold'][0]];
-    'session-unhold': [session: ISipSession, event?: SipSessionEventMap['unhold'][0]];
-    'session-dtmf': [session: ISipSession, event: SipSessionEventMap['dtmf'][0]];
-    'session-refer': [session: ISipSession, event: SipSessionEventMap['refer'][0]];
-    'session-transfer-progress': [session: ISipSession, event: SipSessionEventMap['transfer-progress'][0]];
-    'session-media-state': [session: ISipSession, event: SipSessionEventMap['media-state'][0]];
-    'session-media-failed': [session: ISipSession, event: SipSessionEventMap['media-failed'][0]];
-    'session-quality': [session: ISipSession, snapshot: SipSessionEventMap['quality'][0]];
-    'connection-state': [state: SipConnectionState];
+    "session-state": [session: ISipSession, state: SipSessionStatus];
+    "session-progress": [
+        session: ISipSession,
+        event?: SipSessionEventMap["progress"][0],
+    ];
+    "session-established": [session: ISipSession];
+    "session-terminated": [
+        session: ISipSession,
+        event?: SipSessionEventMap["terminated"][0],
+    ];
+    "session-failed": [
+        session: ISipSession,
+        event: SipSessionEventMap["failed"][0],
+    ];
+    "session-hold": [
+        session: ISipSession,
+        event?: SipSessionEventMap["hold"][0],
+    ];
+    "session-unhold": [
+        session: ISipSession,
+        event?: SipSessionEventMap["unhold"][0],
+    ];
+    "session-dtmf": [
+        session: ISipSession,
+        event: SipSessionEventMap["dtmf"][0],
+    ];
+    "session-refer": [
+        session: ISipSession,
+        event: SipSessionEventMap["refer"][0],
+    ];
+    "session-transfer-progress": [
+        session: ISipSession,
+        event: SipSessionEventMap["transfer-progress"][0],
+    ];
+    "session-media-state": [
+        session: ISipSession,
+        event: SipSessionEventMap["media-state"][0],
+    ];
+    "session-media-failed": [
+        session: ISipSession,
+        event: SipSessionEventMap["media-failed"][0],
+    ];
+    "session-quality": [
+        session: ISipSession,
+        snapshot: SipSessionEventMap["quality"][0],
+    ];
+    "connection-state": [state: SipConnectionState];
 };
 
 type Listener<Args extends unknown[]> = (...args: Args) => void;
 
 export class SipEventEmitter {
-    private listeners: Partial<{ [K in keyof SipEventMap]: Listener<SipEventMap[K]>[] }> = {};
+    private listeners: Partial<{
+        [K in keyof SipEventMap]: Listener<SipEventMap[K]>[];
+    }> = {};
 
-    on<K extends keyof SipEventMap>(event: K, listener: Listener<SipEventMap[K]>): this {
+    on<K extends keyof SipEventMap>(
+        event: K,
+        listener: Listener<SipEventMap[K]>
+    ): this {
         if (!this.listeners[event]) this.listeners[event] = [];
         (this.listeners[event] as Listener<SipEventMap[K]>[]).push(listener);
         return this;
     }
 
-    off<K extends keyof SipEventMap>(event: K, listener: Listener<SipEventMap[K]>): this {
-        const arr = this.listeners[event] as Listener<SipEventMap[K]>[] | undefined;
+    off<K extends keyof SipEventMap>(
+        event: K,
+        listener: Listener<SipEventMap[K]>
+    ): this {
+        const arr = this.listeners[event] as
+            Listener<SipEventMap[K]>[] | undefined;
         if (arr) {
             // TS can't verify a homomorphic mapped-type assignment through a generic index `K`.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            this.listeners[event] = arr.filter(l => l !== listener) as any;
+            this.listeners[event] = arr.filter((l) => l !== listener) as any;
         }
         return this;
     }
@@ -63,7 +113,9 @@ export class SipEventEmitter {
             try {
                 listener(...args);
             } catch (err) {
-                queueMicrotask(() => { throw err; });
+                queueMicrotask(() => {
+                    throw err;
+                });
             }
         }
     }

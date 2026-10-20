@@ -12,11 +12,18 @@ function createFakeSession(connection?: unknown) {
         isOnHold: vi.fn().mockReturnValue({ local: false, remote: false }),
         connection,
         isReadyToReOffer: vi.fn().mockReturnValue(true),
-        renegotiate: vi.fn((_options?: unknown, done?: () => void) => { done?.(); return true; }),
+        renegotiate: vi.fn((_options?: unknown, done?: () => void) => {
+            done?.();
+            return true;
+        }),
     };
 }
 
-function trigger(rawSession: ReturnType<typeof createFakeSession>, event: string, payload?: unknown) {
+function trigger(
+    rawSession: ReturnType<typeof createFakeSession>,
+    event: string,
+    payload?: unknown
+) {
     const call = rawSession.on.mock.calls.find(([e]) => e === event);
     expect(call, `expected a listener registered for "${event}"`).toBeDefined();
     (call![1] as (payload?: unknown) => void)(payload);
@@ -27,15 +34,25 @@ describe("JsSIPSession remote media wiring", () => {
         const rawSession = createFakeSession();
         new JsSIPSession(rawSession);
 
-        const peerConnectionCall = rawSession.on.mock.calls.find(([event]) => event === "peerconnection");
+        const peerConnectionCall = rawSession.on.mock.calls.find(
+            ([event]) => event === "peerconnection"
+        );
         expect(peerConnectionCall).toBeDefined();
-        const peerConnectionHandler = peerConnectionCall![1] as (event: { peerconnection: unknown }) => void;
+        const peerConnectionHandler = peerConnectionCall![1] as (event: {
+            peerconnection: unknown;
+        }) => void;
 
         const addEventListener = vi.fn();
         peerConnectionHandler({ peerconnection: { addEventListener } });
 
-        expect(addEventListener).toHaveBeenCalledWith("track", expect.any(Function));
-        expect(addEventListener).not.toHaveBeenCalledWith("addtrack", expect.any(Function));
+        expect(addEventListener).toHaveBeenCalledWith(
+            "track",
+            expect.any(Function)
+        );
+        expect(addEventListener).not.toHaveBeenCalledWith(
+            "addtrack",
+            expect.any(Function)
+        );
     });
 
     it("assigns the incoming track's stream to the remote element", () => {
@@ -50,11 +67,15 @@ describe("JsSIPSession remote media wiring", () => {
         } as unknown as HTMLMediaElement;
         session.setRemoteElement(remoteElement);
 
-        const peerConnectionHandler = rawSession.on.mock.calls.find(([event]) => event === "peerconnection")![1] as (event: { peerconnection: unknown }) => void;
+        const peerConnectionHandler = rawSession.on.mock.calls.find(
+            ([event]) => event === "peerconnection"
+        )![1] as (event: { peerconnection: unknown }) => void;
         const addEventListener = vi.fn();
         peerConnectionHandler({ peerconnection: { addEventListener } });
 
-        const trackHandler = addEventListener.mock.calls.find(([event]) => event === "track")![1] as (event: { streams: MediaStream[] }) => void;
+        const trackHandler = addEventListener.mock.calls.find(
+            ([event]) => event === "track"
+        )![1] as (event: { streams: MediaStream[] }) => void;
         const stream = new MediaStream() as unknown as MediaStream;
         trackHandler({ streams: [stream] });
 
@@ -101,7 +122,12 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         const onTerminate = vi.fn();
         session.onTerminate = onTerminate;
 
-        rawSession.terminate.mockImplementation(() => trigger(rawSession, "ended", { originator: "local", cause: "Terminated" }));
+        rawSession.terminate.mockImplementation(() =>
+            trigger(rawSession, "ended", {
+                originator: "local",
+                cause: "Terminated",
+            })
+        );
         await session.bye();
 
         expect(onTerminate).toHaveBeenCalledTimes(1);
@@ -114,7 +140,12 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         const terminated = vi.fn();
         session.on("terminated", terminated);
 
-        rawSession.terminate.mockImplementation(() => trigger(rawSession, "ended", { originator: "local", cause: "Terminated" }));
+        rawSession.terminate.mockImplementation(() =>
+            trigger(rawSession, "ended", {
+                originator: "local",
+                cause: "Terminated",
+            })
+        );
         await session.bye();
 
         expect(terminated).toHaveBeenCalledTimes(1);
@@ -137,7 +168,10 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
     });
 
     it("isOnHold() delegates directly to jssip's native isOnHold()", () => {
-        const rawSession = { ...createFakeSession(), isOnHold: vi.fn().mockReturnValue({ local: true, remote: false }) };
+        const rawSession = {
+            ...createFakeSession(),
+            isOnHold: vi.fn().mockReturnValue({ local: true, remote: false }),
+        };
         const session = new JsSIPSession(rawSession);
 
         expect(session.isOnHold()).toEqual({ local: true, remote: false });
@@ -154,7 +188,11 @@ describe("JsSIPSession event bus (parity with SipJSSession's on/off)", () => {
         await session.sendDTMF("7");
 
         expect(dtmf).toHaveBeenCalledWith({ tone: "5", durationMs: 100 });
-        expect(dtmf).toHaveBeenCalledWith({ tone: "7", durationMs: undefined, mode: undefined });
+        expect(dtmf).toHaveBeenCalledWith({
+            tone: "7",
+            durationMs: undefined,
+            mode: undefined,
+        });
     });
 
     it("off() stops further notifications", () => {
@@ -178,7 +216,10 @@ describe("JsSIPSession.sendDTMF", () => {
 
         await session.sendDTMF("1", { mode: "sip-info", durationMs: 200 });
 
-        expect(rawSession.sendDTMF).toHaveBeenCalledWith("1", { duration: 200, transportType: "INFO" });
+        expect(rawSession.sendDTMF).toHaveBeenCalledWith("1", {
+            duration: 200,
+            transportType: "INFO",
+        });
     });
 
     it("maps mode 'rtp-event' to the RFC2833 transport", async () => {
@@ -187,7 +228,9 @@ describe("JsSIPSession.sendDTMF", () => {
 
         await session.sendDTMF("2", { mode: "rtp-event" });
 
-        expect(rawSession.sendDTMF).toHaveBeenCalledWith("2", { transportType: "RFC2833" });
+        expect(rawSession.sendDTMF).toHaveBeenCalledWith("2", {
+            transportType: "RFC2833",
+        });
     });
 
     it("leaves transportType unset when no mode is given, letting jssip pick its default", async () => {
@@ -217,7 +260,11 @@ describe("JsSIPProvider.subscribePresence (parity with SipJSProvider)", () => {
         (provider as unknown as { domain: string }).domain = "example.com";
 
         const onPresence = vi.fn();
-        (provider as unknown as { onUserAgent: { onPresence: typeof onPresence } }).onUserAgent = { onPresence };
+        (
+            provider as unknown as {
+                onUserAgent: { onPresence: typeof onPresence };
+            }
+        ).onUserAgent = { onPresence };
 
         await provider.subscribePresence("1000");
 
@@ -229,11 +276,19 @@ describe("JsSIPProvider.subscribePresence (parity with SipJSProvider)", () => {
         );
         expect(subscriber.subscribe).toHaveBeenCalled();
 
-        const notifyHandler = subscriber.on.mock.calls.find(([event]) => event === "notify")![1] as
-            (isFinal: boolean, request: unknown, body: string, contentType: string) => void;
+        const notifyHandler = subscriber.on.mock.calls.find(
+            ([event]) => event === "notify"
+        )![1] as (
+            isFinal: boolean,
+            request: unknown,
+            body: string,
+            contentType: string
+        ) => void;
         notifyHandler(false, {}, "<basic>open</basic>", "application/pidf+xml");
 
-        expect(onPresence).toHaveBeenCalledWith(expect.objectContaining({ target: "1000", status: "available" }));
+        expect(onPresence).toHaveBeenCalledWith(
+            expect.objectContaining({ target: "1000", status: "available" })
+        );
     });
 
     it("unsubscribes by terminating the matching subscriber", async () => {
@@ -253,7 +308,10 @@ describe("JsSIPProvider.subscribePresence (parity with SipJSProvider)", () => {
 describe("JsSIPProvider.unsubscribePresence (exact target matching)", () => {
     it("leaves other extensions that merely contain the target untouched", async () => {
         const provider = new JsSIPProvider();
-        const subscribers = new Map<string, ReturnType<typeof createFakeSubscriber>>();
+        const subscribers = new Map<
+            string,
+            ReturnType<typeof createFakeSubscriber>
+        >();
         const fakeUa = {
             subscribe: vi.fn((target: string) => {
                 const subscriber = createFakeSubscriber();
@@ -269,9 +327,15 @@ describe("JsSIPProvider.unsubscribePresence (exact target matching)", () => {
         await provider.subscribePresence("1010", { event: "dialog" });
         await provider.unsubscribePresence("10");
 
-        expect(subscribers.get("sip:10@example.com")!.terminate).toHaveBeenCalled();
-        expect(subscribers.get("sip:100@example.com")!.terminate).not.toHaveBeenCalled();
-        expect(subscribers.get("sip:1010@example.com")!.terminate).not.toHaveBeenCalled();
+        expect(
+            subscribers.get("sip:10@example.com")!.terminate
+        ).toHaveBeenCalled();
+        expect(
+            subscribers.get("sip:100@example.com")!.terminate
+        ).not.toHaveBeenCalled();
+        expect(
+            subscribers.get("sip:1010@example.com")!.terminate
+        ).not.toHaveBeenCalled();
     });
 });
 
@@ -309,7 +373,10 @@ describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
 
     it("upgradeToVideo() throws without touching the camera if the session can't re-offer", async () => {
         const pc = { getSenders: () => [{ track: { kind: "audio" } }] };
-        const rawSession = { ...createFakeSession(pc), isReadyToReOffer: vi.fn().mockReturnValue(false) };
+        const rawSession = {
+            ...createFakeSession(pc),
+            isReadyToReOffer: vi.fn().mockReturnValue(false),
+        };
         const session = new JsSIPSession(rawSession);
         const getUserMedia = vi.spyOn(navigator.mediaDevices, "getUserMedia");
 
@@ -319,7 +386,10 @@ describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
 
     it("upgradeToVideo() adds the camera track to the peer connection and renegotiates", async () => {
         const addTrack = vi.fn();
-        const pc = { getSenders: () => [{ track: { kind: "audio" } }], addTrack };
+        const pc = {
+            getSenders: () => [{ track: { kind: "audio" } }],
+            addTrack,
+        };
         const rawSession = createFakeSession(pc);
         const session = new JsSIPSession(rawSession);
 
@@ -360,14 +430,16 @@ describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
     });
 });
 
-describe('JsSIPSession resource cleanup', () => {
-    it('cancels pending ICE ready callbacks when the session ends', async () => {
+describe("JsSIPSession resource cleanup", () => {
+    it("cancels pending ICE ready callbacks when the session ends", async () => {
         vi.useFakeTimers();
         try {
             const raw = createFakeSession();
-            const session = new JsSIPSession(raw, { iceGatheringTimeoutMs: 1000 });
+            const session = new JsSIPSession(raw, {
+                iceGatheringTimeoutMs: 1000,
+            });
             const ready = vi.fn();
-            trigger(raw, 'icecandidate', { ready });
+            trigger(raw, "icecandidate", { ready });
             await session.bye();
             await vi.advanceTimersByTimeAsync(1500);
             expect(ready).not.toHaveBeenCalled();
@@ -376,12 +448,14 @@ describe('JsSIPSession resource cleanup', () => {
         }
     });
 
-    it('removes peer connection listeners when the session ends', async () => {
+    it("removes peer connection listeners when the session ends", async () => {
         const raw = createFakeSession();
         const session = new JsSIPSession(raw);
         const addEventListener = vi.fn();
         const removeEventListener = vi.fn();
-        trigger(raw, 'peerconnection', { peerconnection: { addEventListener, removeEventListener } });
+        trigger(raw, "peerconnection", {
+            peerconnection: { addEventListener, removeEventListener },
+        });
         await session.bye();
         expect(removeEventListener).toHaveBeenCalledTimes(3);
         for (const [name, handler] of addEventListener.mock.calls) {
@@ -389,7 +463,6 @@ describe('JsSIPSession resource cleanup', () => {
         }
     });
 });
-
 
 describe("JsSIPSession hold/unhold failure reporting", () => {
     it("rejects hold when the provider cannot renegotiate", async () => {
@@ -416,25 +489,32 @@ describe("JsSIPSession hold/unhold failure reporting", () => {
     });
 });
 
-describe('JsSIPSession downgradeToAudio rollback', () => {
+describe("JsSIPSession downgradeToAudio rollback", () => {
     function setup() {
-        const track = { kind: 'video', stop: vi.fn() };
-        const sender = { track: track as unknown as MediaStreamTrack | null, replaceTrack: vi.fn(async (next: MediaStreamTrack | null) => { sender.track = next; }) };
+        const track = { kind: "video", stop: vi.fn() };
+        const sender = {
+            track: track as unknown as MediaStreamTrack | null,
+            replaceTrack: vi.fn(async (next: MediaStreamTrack | null) => {
+                sender.track = next;
+            }),
+        };
         const raw = createFakeSession({ getSenders: () => [sender] });
         const session = new JsSIPSession(raw);
         return { track, sender, raw, session };
     }
 
-    it('restores the original live video track when renegotiation is refused', async () => {
+    it("restores the original live video track when renegotiation is refused", async () => {
         const { track, sender, raw, session } = setup();
         raw.renegotiate.mockReturnValue(false);
-        await expect(session.downgradeToAudio()).rejects.toThrow('Unable to renegotiate');
+        await expect(session.downgradeToAudio()).rejects.toThrow(
+            "Unable to renegotiate"
+        );
         expect(track.stop).not.toHaveBeenCalled();
         expect(sender.track).toBe(track);
         expect(sender.replaceTrack).toHaveBeenCalledTimes(2);
     });
 
-    it('stops the original video track only after successful renegotiation', async () => {
+    it("stops the original video track only after successful renegotiation", async () => {
         const { track, sender, session } = setup();
         await session.downgradeToAudio();
         expect(sender.track).toBeNull();
@@ -450,7 +530,10 @@ describe("JsSIPSession ICE recovery lifecycle", () => {
     it("shares one renegotiation across concurrent recovery calls", async () => {
         const raw = createFakeSession(failedConnection());
         let complete: (() => void) | undefined;
-        raw.renegotiate.mockImplementation((_options, done) => { complete = done; return true; });
+        raw.renegotiate.mockImplementation((_options, done) => {
+            complete = done;
+            return true;
+        });
         const session = new JsSIPSession(raw);
         const first = session.recoverMedia();
         const second = session.recoverMedia();
@@ -462,10 +545,15 @@ describe("JsSIPSession ICE recovery lifecycle", () => {
     it("rejects pending recovery on termination and ignores a late callback", async () => {
         const raw = createFakeSession(failedConnection());
         let complete: (() => void) | undefined;
-        raw.renegotiate.mockImplementation((_options, done) => { complete = done; return true; });
+        raw.renegotiate.mockImplementation((_options, done) => {
+            complete = done;
+            return true;
+        });
         const session = new JsSIPSession(raw);
         const pending = session.recoverMedia();
-        const rejection = expect(pending).rejects.toThrow("Session ended during ICE recovery");
+        const rejection = expect(pending).rejects.toThrow(
+            "Session ended during ICE recovery"
+        );
         trigger(raw, "ended", { originator: "remote", cause: "Terminated" });
         await rejection;
         complete?.();
@@ -476,6 +564,8 @@ describe("JsSIPSession ICE recovery lifecycle", () => {
         const raw = createFakeSession(failedConnection());
         raw.renegotiate.mockReturnValue(false);
         const session = new JsSIPSession(raw);
-        await expect(session.recoverMedia()).rejects.toThrow("Unable to renegotiate");
+        await expect(session.recoverMedia()).rejects.toThrow(
+            "Unable to renegotiate"
+        );
     });
 });

@@ -23,7 +23,14 @@ export function stripSipPrefix(uri: string): string {
 }
 
 export function emptyCallStats(): CallStats {
-    return { jitter: 0, packetLoss: 0, roundTripTime: 0, codec: '', bytesSent: 0, bytesReceived: 0 };
+    return {
+        jitter: 0,
+        packetLoss: 0,
+        roundTripTime: 0,
+        codec: "",
+        bytesSent: 0,
+        bytesReceived: 0,
+    };
 }
 
 /**
@@ -40,28 +47,34 @@ export class CallStatsSampler {
         const stats = await pc.getStats();
         const result = emptyCallStats();
         let inboundCodecId: string | undefined;
-        let fallbackCodec = '';
+        let fallbackCodec = "";
 
         stats.forEach((s: RTCRtpStreamStatsLike) => {
-            if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+            if (s.type === "inbound-rtp" && s.kind === "audio") {
                 result.jitter = s.jitter ?? 0;
                 result.bytesReceived = s.bytesReceived ?? 0;
                 inboundCodecId = s.codecId;
-                this.updatePacketLoss(s.packetsLost ?? 0, s.packetsReceived ?? 0);
+                this.updatePacketLoss(
+                    s.packetsLost ?? 0,
+                    s.packetsReceived ?? 0
+                );
             }
-            if (s.type === 'outbound-rtp' && s.kind === 'audio') {
+            if (s.type === "outbound-rtp" && s.kind === "audio") {
                 result.bytesSent = s.bytesSent ?? 0;
             }
-            if (s.type === 'remote-inbound-rtp' && s.kind === 'audio') {
+            if (s.type === "remote-inbound-rtp" && s.kind === "audio") {
                 result.roundTripTime = s.roundTripTime ?? 0;
             }
-            if (s.type === 'codec' && s.mimeType) {
-                if (!fallbackCodec || s.mimeType.startsWith('audio/')) fallbackCodec = s.mimeType;
+            if (s.type === "codec" && s.mimeType) {
+                if (!fallbackCodec || s.mimeType.startsWith("audio/"))
+                    fallbackCodec = s.mimeType;
             }
         });
 
         const inboundCodec = inboundCodecId
-            ? (stats as unknown as Map<string, RTCRtpStreamStatsLike>).get?.(inboundCodecId)
+            ? (stats as unknown as Map<string, RTCRtpStreamStatsLike>).get?.(
+                  inboundCodecId
+              )
             : undefined;
         result.codec = inboundCodec?.mimeType ?? fallbackCodec;
         result.packetLoss = this.packetLoss;
@@ -73,7 +86,9 @@ export class CallStatsSampler {
         this.previous = { lost, received };
 
         const deltaLost = previous ? Math.max(0, lost - previous.lost) : lost;
-        const deltaReceived = previous ? Math.max(0, received - previous.received) : received;
+        const deltaReceived = previous
+            ? Math.max(0, received - previous.received)
+            : received;
         const total = deltaLost + deltaReceived;
         // No packets since the last sample (e.g. two reads in a row): keep the last value.
         if (total > 0) this.packetLoss = (deltaLost / total) * 100;

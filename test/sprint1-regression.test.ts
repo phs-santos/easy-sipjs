@@ -5,13 +5,24 @@ import { SessionState } from "sip.js";
 import { SipJSSession } from "../src/core/sipjs-provider.js";
 import { JsSIPSession } from "../src/core/jssip-provider.js";
 import { SipClient } from "../src/index.js";
-import type { ISipProvider, ISipRegisterDelegate, ISipUserAgentDelegate } from "../src/index.js";
+import type {
+    ISipProvider,
+    ISipRegisterDelegate,
+    ISipUserAgentDelegate,
+} from "../src/index.js";
 
-const credentials = { domain: "example.com", phone: "1000", secret: "x", server: "wss://example.com/ws" };
+const credentials = {
+    domain: "example.com",
+    phone: "1000",
+    secret: "x",
+    server: "wss://example.com/ws",
+};
 
 function deferred<T = void>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((r) => { resolve = r; });
+    const promise = new Promise<T>((r) => {
+        resolve = r;
+    });
     return { promise, resolve };
 }
 
@@ -22,7 +33,9 @@ function createSipJsSession(settings = {}) {
         iceConnectionState: "connected",
         connectionState: "connected",
         getSenders: () => [],
-        addEventListener: vi.fn((event: string, listener: () => void) => listeners.set(event, listener)),
+        addEventListener: vi.fn((event: string, listener: () => void) =>
+            listeners.set(event, listener)
+        ),
         removeEventListener: vi.fn((event: string, listener: () => void) => {
             if (listeners.get(event) === listener) listeners.delete(event);
         }),
@@ -34,15 +47,20 @@ function createSipJsSession(settings = {}) {
         delegate: undefined,
         remoteIdentity: { uri: { host: "example.com" } },
         sessionDescriptionHandler: { peerConnection: pc },
-        sessionDescriptionHandlerOptionsReInvite: { constraints: { audio: true } },
+        sessionDescriptionHandlerOptionsReInvite: {
+            constraints: { audio: true },
+        },
         bye: vi.fn().mockResolvedValue(undefined),
-        invite: vi.fn((options?: { requestDelegate?: { onAccept?: () => void } }) => {
-            options?.requestDelegate?.onAccept?.();
-            return Promise.resolve();
-        }),
+        invite: vi.fn(
+            (options?: { requestDelegate?: { onAccept?: () => void } }) => {
+                options?.requestDelegate?.onAccept?.();
+                return Promise.resolve();
+            }
+        ),
     } as any;
     const session = new SipJSSession(rawSession, settings);
-    const onStateChange = rawSession.stateChange.addListener.mock.calls[0][0] as (state: SessionState) => void;
+    const onStateChange = rawSession.stateChange.addListener.mock
+        .calls[0][0] as (state: SessionState) => void;
     onStateChange(SessionState.Established);
     // Simula um evento do browser: chama o listener que estiver registrado, se houver.
     const fireIce = (state: string) => {
@@ -81,14 +99,25 @@ describe("FIX-003 (JsSIP) compartilhamento de tela no encerramento", () => {
     function createSharingSession() {
         const handlers = new Map<string, (payload?: unknown) => void>();
         const cameraTrack = { kind: "video", stop: vi.fn() };
-        const sender = { track: cameraTrack as unknown, replaceTrack: vi.fn(async (t: unknown) => { sender.track = t; }) };
+        const sender = {
+            track: cameraTrack as unknown,
+            replaceTrack: vi.fn(async (t: unknown) => {
+                sender.track = t;
+            }),
+        };
         const raw = {
             id: "session-1",
-            on: vi.fn((event: string, cb: (payload?: unknown) => void) => handlers.set(event, cb)),
+            on: vi.fn((event: string, cb: (payload?: unknown) => void) =>
+                handlers.set(event, cb)
+            ),
             terminate: vi.fn(),
             connection: { getSenders: () => [sender] },
         };
-        const screenTrack = { kind: "video", stop: vi.fn(), onended: null as null | (() => void) };
+        const screenTrack = {
+            kind: "video",
+            stop: vi.fn(),
+            onended: null as null | (() => void),
+        };
         vi.spyOn(navigator.mediaDevices, "getDisplayMedia").mockResolvedValue({
             getVideoTracks: () => [screenTrack],
             getTracks: () => [screenTrack],
@@ -97,7 +126,9 @@ describe("FIX-003 (JsSIP) compartilhamento de tela no encerramento", () => {
         return { raw, session, screenTrack, handlers };
     }
 
-    afterEach(() => { vi.restoreAllMocks(); });
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
 
     it("para a track de tela ao desligar sem parar o compartilhamento antes", async () => {
         const { session, screenTrack } = createSharingSession();
@@ -120,11 +151,17 @@ describe("FIX-003 (JsSIP) compartilhamento de tela no encerramento", () => {
 });
 
 describe("FIX-004 (SIP.js) recuperação ICE depois do encerramento", () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("não faz re-INVITE se a sessão termina durante a carência de 'disconnected'", async () => {
-        const { rawSession, session, fireIce } = createSipJsSession({ mediaRecovery: { disconnectedGraceMs: 3000 } });
+        const { rawSession, session, fireIce } = createSipJsSession({
+            mediaRecovery: { disconnectedGraceMs: 3000 },
+        });
 
         fireIce("disconnected");
         await vi.advanceTimersByTimeAsync(1000);
@@ -149,20 +186,33 @@ describe("FIX-004 (SIP.js) recuperação ICE depois do encerramento", () => {
 });
 
 describe("FIX-005 unregister() com a fila ocupada", () => {
-    beforeEach(() => { vi.useFakeTimers(); });
-    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it("cancela a reconexão agendada mesmo antes do unregister sair da fila", async () => {
         const slowRefresh = deferred();
-        const delegates: { userAgent?: ISipUserAgentDelegate; register?: ISipRegisterDelegate } = {};
+        const delegates: {
+            userAgent?: ISipUserAgentDelegate;
+            register?: ISipRegisterDelegate;
+        } = {};
         const provider = {
             managesRegistrationRefresh: true,
-            register: vi.fn(async (_c: unknown, ua: ISipUserAgentDelegate, reg: ISipRegisterDelegate) => {
-                delegates.userAgent = ua;
-                delegates.register = reg;
-                ua.onConnect?.();
-                reg.onAccept?.();
-            }),
+            register: vi.fn(
+                async (
+                    _c: unknown,
+                    ua: ISipUserAgentDelegate,
+                    reg: ISipRegisterDelegate
+                ) => {
+                    delegates.userAgent = ua;
+                    delegates.register = reg;
+                    ua.onConnect?.();
+                    reg.onAccept?.();
+                }
+            ),
             unregister: vi.fn().mockResolvedValue(undefined),
             call: vi.fn(),
             answer: vi.fn(),
@@ -170,7 +220,10 @@ describe("FIX-005 unregister() com a fila ocupada", () => {
             reconnect: vi.fn().mockResolvedValue(undefined),
             refreshRegistration: vi.fn(() => slowRefresh.promise),
         } satisfies ISipProvider;
-        const client = new SipClient(credentials, { customProvider: provider, reconnectDelay: 1000 });
+        const client = new SipClient(credentials, {
+            customProvider: provider,
+            reconnectDelay: 1000,
+        });
         await client.connect();
 
         // Uma operação lenta ocupa a fila; a conexão cai e agenda reconexão em 500 ms.

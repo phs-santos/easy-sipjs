@@ -11,39 +11,39 @@ As entregas das sprints 3–5 não tinham rodado nenhum comando. Ao rodar:
 
 ## Antes/depois
 
-| Sprint | Caso | Antes (`7415a84`) | Depois | Conclusão |
-| --- | --- | --- | --- | --- |
-| 3 | JsSIP hold sem renegociação disponível | FALHA | PASSA | Corrigido |
-| 3 | JsSIP hold recusado pelo JsSIP | FALHA | PASSA | Corrigido |
-| 3 | JsSIP unhold recusado | FALHA | PASSA | Corrigido |
-| 3 (cont.) | Microfone: chamada termina com permissão pendente (SIP.js e JsSIP) | FALHA | PASSA | Corrigido |
-| 3 (cont.) | Microfone: duas trocas simultâneas (SIP.js e JsSIP) | FALHA | PASSA | Corrigido |
-| 3 (cont.) | Microfone: dispositivo sem áudio — JsSIP | FALHA | PASSA | Corrigido |
-| 3 (cont.) | Microfone: dispositivo sem áudio — SIP.js | PASSA | PASSA | Já funcionava |
-| 4 | Downgrade recusado restaura o vídeo | FALHA | PASSA | Corrigido |
-| 4 | Downgrade aceito para a track antiga | PASSA | PASSA | Teste de controle |
-| 5 | Duas recuperações de ICE simultâneas | FALHA | PASSA | Corrigido |
-| 5 | Chamada termina durante a recuperação | FALHA (pendurava) | PASSA | Corrigido |
-| 5 | ICE restart recusado | PASSA | PASSA | Já funcionava |
+| Sprint    | Caso                                                               | Antes (`7415a84`) | Depois | Conclusão         |
+| --------- | ------------------------------------------------------------------ | ----------------- | ------ | ----------------- |
+| 3         | JsSIP hold sem renegociação disponível                             | FALHA             | PASSA  | Corrigido         |
+| 3         | JsSIP hold recusado pelo JsSIP                                     | FALHA             | PASSA  | Corrigido         |
+| 3         | JsSIP unhold recusado                                              | FALHA             | PASSA  | Corrigido         |
+| 3 (cont.) | Microfone: chamada termina com permissão pendente (SIP.js e JsSIP) | FALHA             | PASSA  | Corrigido         |
+| 3 (cont.) | Microfone: duas trocas simultâneas (SIP.js e JsSIP)                | FALHA             | PASSA  | Corrigido         |
+| 3 (cont.) | Microfone: dispositivo sem áudio — JsSIP                           | FALHA             | PASSA  | Corrigido         |
+| 3 (cont.) | Microfone: dispositivo sem áudio — SIP.js                          | PASSA             | PASSA  | Já funcionava     |
+| 4         | Downgrade recusado restaura o vídeo                                | FALHA             | PASSA  | Corrigido         |
+| 4         | Downgrade aceito para a track antiga                               | PASSA             | PASSA  | Teste de controle |
+| 5         | Duas recuperações de ICE simultâneas                               | FALHA             | PASSA  | Corrigido         |
+| 5         | Chamada termina durante a recuperação                              | FALHA (pendurava) | PASSA  | Corrigido         |
+| 5         | ICE restart recusado                                               | PASSA             | PASSA  | Já funcionava     |
 
 ## Problemas que as sprints não cobriam (encontrados no cockpit e corrigidos)
 
-| Problema | Teste | Antes | Depois |
-| --- | --- | --- | --- |
-| `setAudioInput('')` ("padrão do sistema") dava `OverconstrainedError` | `media-controls.test.ts` | FALHA | PASSA |
-| Trocar microfone desmutava a chamada | `media-controls.test.ts` | FALHA | PASSA |
-| `upgradeToVideo()` voltava para o microfone padrão (SIP.js) | `media-controls.test.ts` | FALHA | PASSA |
-| `shareScreen()` exigia vídeo já ativo | `media-controls.test.ts` (4 testes) | FALHA | PASSA |
-| `onSipLog` não recebia nada sem `debug` (SIP.js) e nunca no JsSIP | — (exige UA real) | — | Verificar no cockpit |
+| Problema                                                              | Teste                               | Antes | Depois               |
+| --------------------------------------------------------------------- | ----------------------------------- | ----- | -------------------- |
+| `setAudioInput('')` ("padrão do sistema") dava `OverconstrainedError` | `media-controls.test.ts`            | FALHA | PASSA                |
+| Trocar microfone desmutava a chamada                                  | `media-controls.test.ts`            | FALHA | PASSA                |
+| `upgradeToVideo()` voltava para o microfone padrão (SIP.js)           | `media-controls.test.ts`            | FALHA | PASSA                |
+| `shareScreen()` exigia vídeo já ativo                                 | `media-controls.test.ts` (4 testes) | FALHA | PASSA                |
+| `onSipLog` não recebia nada sem `debug` (SIP.js) e nunca no JsSIP     | — (exige UA real)                   | —     | Verificar no cockpit |
 
 ## Comandos
 
-| Comando | Resultado |
-| --- | --- |
-| `npm run lint` | PASSOU |
-| `npm run typecheck` | PASSOU |
-| `npm test` | PASSOU — 116/116 |
-| `npm run build` | PASSOU |
+| Comando              | Resultado                                                                        |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `npm run lint`       | PASSOU                                                                           |
+| `npm run typecheck`  | PASSOU                                                                           |
+| `npm test`           | PASSOU — 116/116                                                                 |
+| `npm run build`      | PASSOU                                                                           |
 | PBX real / navegador | Parcial: cockpit usado em chamadas reais; vídeo e tela ainda precisam de reteste |
 
 ## Limites que continuam

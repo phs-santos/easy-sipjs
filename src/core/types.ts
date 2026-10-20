@@ -1,4 +1,4 @@
-export type SoftphonePreset = 'asterisk' | 'kamailio' | 'generic';
+export type SoftphonePreset = "asterisk" | "kamailio" | "generic";
 /**
  * How a local hold is signalled on the `sipjs` provider (JsSIP has its own):
  * - `asterisk-inactive`: every media line becomes `a=inactive`. Stable on Asterisk paths
@@ -6,7 +6,8 @@ export type SoftphonePreset = 'asterisk' | 'kamailio' | 'generic';
  * - `asterisk-sendonly`: `a=sendonly`, the textbook RFC 3264 hold.
  * - `sipjs-default`: sip.js's own hold, which sets the transceiver directions.
  */
-export type HoldStrategy = 'sipjs-default' | 'asterisk-inactive' | 'asterisk-sendonly';
+export type HoldStrategy =
+    "sipjs-default" | "asterisk-inactive" | "asterisk-sendonly";
 
 export interface MediaRecoveryOptions {
     /** Defaults to true. When false, a broken media path is only reported (`media-failed`). */
@@ -58,10 +59,12 @@ export interface SipCredentials extends SipSessionDefaults {
 }
 
 /** `false` disables a sound; a string is the URL of a file to loop; omitted uses the built-in synthesized tone. */
-export type SoftphoneSounds = false | {
-    ringtone?: string | false;
-    ringback?: string | false;
-};
+export type SoftphoneSounds =
+    | false
+    | {
+          ringtone?: string | false;
+          ringback?: string | false;
+      };
 
 export interface MediaElements {
     localElement?: HTMLMediaElement;
@@ -82,17 +85,18 @@ export interface CallOptions extends MediaElements {
     earlyMedia?: boolean;
 }
 
-export type SipConnectionState = 'connecting' | 'connected' | 'registered' | 'disconnected' | 'error';
+export type SipConnectionState =
+    "connecting" | "connected" | "registered" | "disconnected" | "error";
 
 export type SipSessionStatus =
-    | 'initial'
-    | 'establishing'
-    | 'established'
-    | 'terminating'
-    | 'terminated'
-    | 'failed';
+    | "initial"
+    | "establishing"
+    | "established"
+    | "terminating"
+    | "terminated"
+    | "failed";
 
-export type DtmfMode = 'sip-info' | 'rtp-event' | 'auto';
+export type DtmfMode = "sip-info" | "rtp-event" | "auto";
 
 export interface DtmfOptions {
     /** Defaults to the client's `dtmfMode`, which comes from the preset: Asterisk/Kamailio use `sip-info`; generic uses `auto`. */
@@ -105,18 +109,25 @@ export interface SipFailureEvent {
     statusCode?: number;
     reasonPhrase?: string;
     cause?: unknown;
-    originator?: 'local' | 'remote' | 'system' | string;
+    originator?: "local" | "remote" | "system" | string;
 }
 
 export interface SipResponseEvent {
-    method: 'REGISTER' | 'INVITE' | 'REFER' | 'MESSAGE' | 'INFO' | 'OPTIONS' | string;
+    method:
+        | "REGISTER"
+        | "INVITE"
+        | "REFER"
+        | "MESSAGE"
+        | "INFO"
+        | "OPTIONS"
+        | string;
     statusCode: number;
     reasonPhrase?: string;
     raw?: unknown;
 }
 
 export interface SipSessionProgressEvent extends SipResponseEvent {
-    method: 'INVITE';
+    method: "INVITE";
     /** 183 with SDP usually means remote early media should replace local ringback. */
     hasEarlyMedia?: boolean;
 }
@@ -169,7 +180,7 @@ export interface SipMediaFailureEvent {
 export interface SipHoldEvent {
     /** Who initiated the hold/unhold. `'remote'` is best-effort (SDP direction sniffing)
      *  on providers that don't report it natively — absent if it couldn't be determined. */
-    originator?: 'local' | 'remote' | 'system';
+    originator?: "local" | "remote" | "system";
 }
 
 export interface SipSessionEventMap {
@@ -186,16 +197,16 @@ export interface SipSessionEventMap {
     refer: [event: SipReferEvent];
     message: [event: SipMessageEvent];
     notify: [notification: unknown];
-    'transfer-progress': [event: SipTransferProgressEvent];
-    'media-state': [event: SipMediaStateEvent];
-    'media-failed': [event: SipMediaFailureEvent];
+    "transfer-progress": [event: SipTransferProgressEvent];
+    "media-state": [event: SipMediaStateEvent];
+    "media-failed": [event: SipMediaFailureEvent];
     quality: [snapshot: CallQualitySnapshot];
 }
 
 export interface PresenceEvent {
     target: string;
     extension?: string;
-    status: 'available' | 'busy' | 'ringing' | 'offline' | 'unknown';
+    status: "available" | "busy" | "ringing" | "offline" | "unknown";
     note?: string;
     body?: string;
     contentType?: string;
@@ -204,7 +215,7 @@ export interface PresenceEvent {
 
 export interface PresenceSubscribeOptions {
     /** SIP event package. Defaults to `presence`. Use `dialog` for BLF/dialog-info. */
-    event?: 'presence' | 'dialog' | string;
+    event?: "presence" | "dialog" | string;
     expires?: number;
     extraHeaders?: string[];
 }
@@ -234,7 +245,7 @@ export interface CallStats {
 
 export interface CallQualitySnapshot extends CallStats {
     score: number;
-    level: 'excellent' | 'good' | 'warning' | 'bad';
+    level: "excellent" | "good" | "warning" | "bad";
     jitterMs: number;
     packetLossPercent: number;
     rttMs: number;
@@ -245,7 +256,7 @@ export interface CallQualitySnapshot extends CallStats {
 export interface SoftphoneDevice {
     id: string;
     label: string;
-    kind: 'microphone' | 'speaker' | 'camera';
+    kind: "microphone" | "speaker" | "camera";
     rawKind: MediaDeviceKind;
     isDefault: boolean;
 }
@@ -299,6 +310,6 @@ export interface CreateSoftphoneConfig {
     iceServers?: RTCIceServer[];
     iceGatheringTimeoutMs?: number;
     debug?: boolean;
-    provider?: 'sipjs' | 'jssip';
+    provider?: "sipjs" | "jssip";
     sounds?: SoftphoneSounds;
 }

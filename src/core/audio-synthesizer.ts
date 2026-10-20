@@ -6,9 +6,19 @@ interface Tone {
 }
 
 // US/standard ringback: 440Hz + 480Hz, 2 seconds on, 4 seconds off.
-const RINGBACK: Tone = { frequencies: [440, 480], volume: 0.08, onMs: 2000, offMs: 4000 };
+const RINGBACK: Tone = {
+    frequencies: [440, 480],
+    volume: 0.08,
+    onMs: 2000,
+    offMs: 4000,
+};
 // Dual-tone ring (400Hz + 450Hz), 1.5 seconds on, 3 seconds off.
-const RINGTONE: Tone = { frequencies: [400, 450], volume: 0.12, onMs: 1500, offMs: 3000 };
+const RINGTONE: Tone = {
+    frequencies: [400, 450],
+    volume: 0.12,
+    onMs: 1500,
+    offMs: 3000,
+};
 
 // One context for every synthesizer: creating an AudioContext per ring spins up
 // an audio thread each time and browsers cap how many may exist. It is
@@ -34,8 +44,12 @@ export class SipAudioSynthesizer {
     private timer?: ReturnType<typeof setTimeout>;
     private isPlaying = false;
 
-    public playRingback() { this.play(RINGBACK); }
-    public playRingtone() { this.play(RINGTONE); }
+    public playRingback() {
+        this.play(RINGBACK);
+    }
+    public playRingtone() {
+        this.play(RINGTONE);
+    }
 
     public stop() {
         if (!this.isPlaying) return;
@@ -44,14 +58,16 @@ export class SipAudioSynthesizer {
             clearTimeout(this.timer);
             this.timer = undefined;
         }
-        this.oscillators.forEach(osc => {
+        this.oscillators.forEach((osc) => {
             try {
                 osc.stop();
                 osc.disconnect();
             } catch (e) {}
         });
         this.oscillators = [];
-        try { this.gainNode?.disconnect(); } catch (e) {}
+        try {
+            this.gainNode?.disconnect();
+        } catch (e) {}
         this.gainNode = undefined;
 
         activeVoices = Math.max(0, activeVoices - 1);
@@ -74,7 +90,7 @@ export class SipAudioSynthesizer {
         gain.gain.value = 0;
         gain.connect(ctx.destination);
         this.gainNode = gain;
-        this.oscillators = tone.frequencies.map(frequency => {
+        this.oscillators = tone.frequencies.map((frequency) => {
             const osc = ctx.createOscillator();
             osc.type = "sine";
             osc.frequency.value = frequency;

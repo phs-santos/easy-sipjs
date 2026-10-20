@@ -10,17 +10,29 @@ function call(onHold = false) {
         terminate: vi.fn(),
         isOnHold: () => ({ local: onHold, remote: false }),
         isReadyToReOffer: () => true,
-        hold: vi.fn((_o: unknown, cb?: () => void) => { done = cb; return true; }),
-        unhold: vi.fn((_o: unknown, cb?: () => void) => { done = cb; return true; }),
+        hold: vi.fn((_o: unknown, cb?: () => void) => {
+            done = cb;
+            return true;
+        }),
+        unhold: vi.fn((_o: unknown, cb?: () => void) => {
+            done = cb;
+            return true;
+        }),
     };
-    return { session: new JsSIPSession(raw as any), raw, confirm: () => done?.() };
+    return {
+        session: new JsSIPSession(raw as any),
+        raw,
+        confirm: () => done?.(),
+    };
 }
 
 describe("JsSIP hold/unhold esperam a confirmação do PBX", () => {
     it("hold() fica pendente até o PBX aceitar o re-INVITE", async () => {
         const { session, confirm } = call();
         let settled = false;
-        const holding = session.hold().then(() => { settled = true; });
+        const holding = session.hold().then(() => {
+            settled = true;
+        });
 
         await Promise.resolve();
         expect(settled).toBe(false);
@@ -44,6 +56,8 @@ describe("JsSIP hold/unhold esperam a confirmação do PBX", () => {
 
         await session.bye();
 
-        await expect(holding).rejects.toMatchObject({ code: "session-terminated" });
+        await expect(holding).rejects.toMatchObject({
+            code: "session-terminated",
+        });
     });
 });

@@ -14,13 +14,23 @@ import {
     CreateSoftphoneConfig,
     SoftphoneDiagnostics,
 } from "./core/types.js";
-import { ISipProvider, ISipSession, ISipUserAgentDelegate, ISipRegisterDelegate } from "./core/provider.js";
+import {
+    ISipProvider,
+    ISipSession,
+    ISipUserAgentDelegate,
+    ISipRegisterDelegate,
+} from "./core/provider.js";
 import { SipAudioSynthesizer } from "./core/audio-synthesizer.js";
 import { SipEventEmitter, SipEventMap } from "./core/event-emitter.js";
 import { DeviceManager } from "./core/device-manager.js";
 import { redactSipLog } from "./core/logger.js";
 import { SipError, SipLogCode } from "./core/errors.js";
-import type { DtmfMode, HoldStrategy, MediaRecoveryOptions, SipSessionDefaults } from "./core/types.js";
+import type {
+    DtmfMode,
+    HoldStrategy,
+    MediaRecoveryOptions,
+    SipSessionDefaults,
+} from "./core/types.js";
 
 export interface SipClientOptions {
     /**
@@ -37,7 +47,7 @@ export interface SipClientOptions {
     /** Overrides how a broken media path is recovered mid-call. */
     mediaRecovery?: MediaRecoveryOptions;
     /** Defaults to `sipjs`. The SIP stack is loaded on demand, so only the chosen one ends up in the app's bundle. */
-    provider?: 'sipjs' | 'jssip';
+    provider?: "sipjs" | "jssip";
     customProvider?: ISipProvider;
     /** Ringtone/ringback. `false` (for everything or per sound) leaves the sounds to the app. */
     sounds?: SoftphoneSounds;
@@ -61,10 +71,13 @@ export interface SipClientOptions {
     healthCheckIntervalMs?: number;
 }
 
-const PRESET_DEFAULTS: Record<SoftphonePreset, Required<Pick<SipSessionDefaults, 'dtmfMode' | 'holdStrategy'>>> = {
-    asterisk: { dtmfMode: 'sip-info', holdStrategy: 'asterisk-inactive' },
-    kamailio: { dtmfMode: 'sip-info', holdStrategy: 'asterisk-inactive' },
-    generic: { dtmfMode: 'auto', holdStrategy: 'sipjs-default' },
+const PRESET_DEFAULTS: Record<
+    SoftphonePreset,
+    Required<Pick<SipSessionDefaults, "dtmfMode" | "holdStrategy">>
+> = {
+    asterisk: { dtmfMode: "sip-info", holdStrategy: "asterisk-inactive" },
+    kamailio: { dtmfMode: "sip-info", holdStrategy: "asterisk-inactive" },
+    generic: { dtmfMode: "auto", holdStrategy: "sipjs-default" },
 };
 
 const FIRST_RECONNECT_DELAY_MS = 500;
@@ -73,7 +86,7 @@ const PING_FAILURES_BEFORE_RECONNECT = 2;
 export class SipClient {
     private sessions: ISipSession[] = [];
     private activeSessionId?: string;
-    private connectionState: SipConnectionState = 'disconnected';
+    private connectionState: SipConnectionState = "disconnected";
     private provider?: ISipProvider;
     private providerReady: Promise<ISipProvider>;
     private emitter = new SipEventEmitter();
@@ -83,7 +96,12 @@ export class SipClient {
     public onRegister: ISipRegisterDelegate = {};
 
     public onConnectionStateChange?: (state: SipConnectionState) => void;
-    public onSipLog?: (level: string, category: string, label: string, content: string) => void;
+    public onSipLog?: (
+        level: string,
+        category: string,
+        label: string,
+        content: string
+    ) => void;
 
     private started = false;
     private intentionalDisconnect = false;
@@ -102,26 +120,42 @@ export class SipClient {
     private registrationExpiringBuffer: number;
     private networkMonitoringEnabled = false;
 
-    private soundElements: { ringtone?: HTMLAudioElement; ringback?: HTMLAudioElement } = {};
+    private soundElements: {
+        ringtone?: HTMLAudioElement;
+        ringback?: HTMLAudioElement;
+    } = {};
     // One per sound, so answering a call doesn't cut the ringtone of a second one and vice versa.
-    private synthesizers = { ringtone: new SipAudioSynthesizer(), ringback: new SipAudioSynthesizer() };
+    private synthesizers = {
+        ringtone: new SipAudioSynthesizer(),
+        ringback: new SipAudioSynthesizer(),
+    };
 
     private operationLock: Promise<void> = Promise.resolve();
     /** Invalidates callbacks from older provider registrations and health checks. */
     private lifecycleGeneration = 0;
-    private presenceSubscriptions = new Map<string, PresenceSubscribeOptions | undefined>();
+    private presenceSubscriptions = new Map<
+        string,
+        PresenceSubscribeOptions | undefined
+    >();
     private healthTimer?: ReturnType<typeof setInterval>;
 
     public static isVideoCall(invitation: SipInvitation): boolean {
-        const raw = invitation.raw as { request?: { body?: unknown } } | undefined;
+        const raw = invitation.raw as
+            { request?: { body?: unknown } } | undefined;
         const body = raw?.request?.body;
-        return typeof body === 'string' && body.includes("m=video") && !body.includes("m=video 0");
+        return (
+            typeof body === "string" &&
+            body.includes("m=video") &&
+            !body.includes("m=video 0")
+        );
     }
 
-    public static async requestPermissions(options: { audio?: boolean, video?: boolean } = { audio: true }): Promise<boolean> {
+    public static async requestPermissions(
+        options: { audio?: boolean; video?: boolean } = { audio: true }
+    ): Promise<boolean> {
         try {
             const stream = await navigator.mediaDevices.getUserMedia(options);
-            stream.getTracks().forEach(track => track.stop());
+            stream.getTracks().forEach((track) => track.stop());
             return true;
         } catch (error) {
             console.error("Failed to acquire media permissions:", error);
@@ -132,25 +166,34 @@ export class SipClient {
     public static async getAudioOutputDevices(): Promise<MediaDeviceInfo[]> {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
-            return devices.filter(d => d.kind === 'audiooutput');
-        } catch { return []; }
+            return devices.filter((d) => d.kind === "audiooutput");
+        } catch {
+            return [];
+        }
     }
 
     public static async getAudioInputDevices(): Promise<MediaDeviceInfo[]> {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
-            return devices.filter(d => d.kind === 'audioinput');
-        } catch { return []; }
+            return devices.filter((d) => d.kind === "audioinput");
+        } catch {
+            return [];
+        }
     }
 
     public static async getVideoInputDevices(): Promise<MediaDeviceInfo[]> {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
-            return devices.filter(d => d.kind === 'videoinput');
-        } catch { return []; }
+            return devices.filter((d) => d.kind === "videoinput");
+        } catch {
+            return [];
+        }
     }
 
-    constructor(private credentials: SipCredentials, private options: SipClientOptions = {}) {
+    constructor(
+        private credentials: SipCredentials,
+        private options: SipClientOptions = {}
+    ) {
         this.provider = options.customProvider;
         this.providerReady = this.loadProvider();
         this.providerReady.catch(() => undefined); // surfaced by whichever call awaits it
@@ -158,7 +201,8 @@ export class SipClient {
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
         this.reconnectDelay = options.reconnectDelay ?? 5000;
         this.maxReconnectDelay = options.maxReconnectDelay ?? 60000;
-        this.registrationExpiringBuffer = options.registrationExpiringBuffer ?? 30;
+        this.registrationExpiringBuffer =
+            options.registrationExpiringBuffer ?? 30;
         this.autoReconnect = options.autoReconnect ?? true;
         this.autoRefreshRegistration = options.autoRefreshRegistration ?? true;
 
@@ -171,7 +215,7 @@ export class SipClient {
      */
     private async loadProvider(): Promise<ISipProvider> {
         if (this.provider) return this.provider;
-        if (this.options.provider === 'jssip') {
+        if (this.options.provider === "jssip") {
             const { JsSIPProvider } = await import("./core/jssip-provider.js");
             this.provider = new JsSIPProvider();
         } else {
@@ -187,25 +231,42 @@ export class SipClient {
 
     /** Explicit client option, then whatever came with the credentials, then the preset. */
     private providerCredentials(): SipCredentials {
-        const preset = PRESET_DEFAULTS[this.options.preset ?? 'asterisk'];
+        const preset = PRESET_DEFAULTS[this.options.preset ?? "asterisk"];
         return {
             ...this.credentials,
-            dtmfMode: this.options.dtmfMode ?? this.credentials.dtmfMode ?? preset.dtmfMode,
-            holdStrategy: this.options.holdStrategy ?? this.credentials.holdStrategy ?? preset.holdStrategy,
-            mediaRecovery: this.options.mediaRecovery ?? this.credentials.mediaRecovery,
+            dtmfMode:
+                this.options.dtmfMode ??
+                this.credentials.dtmfMode ??
+                preset.dtmfMode,
+            holdStrategy:
+                this.options.holdStrategy ??
+                this.credentials.holdStrategy ??
+                preset.holdStrategy,
+            mediaRecovery:
+                this.options.mediaRecovery ?? this.credentials.mediaRecovery,
         };
     }
 
     // ─── Friendly aliases ────────────────────────────────────────────────────
 
-    async connect(): Promise<SipRegisterResult> { return this.register(); }
-    async disconnect(): Promise<void> { return this.unregister(); }
+    async connect(): Promise<SipRegisterResult> {
+        return this.register();
+    }
+    async disconnect(): Promise<void> {
+        return this.unregister();
+    }
 
-    async dial(destination: string, options: Omit<CallOptions, 'destination'> = {}): Promise<ISipSession> {
+    async dial(
+        destination: string,
+        options: Omit<CallOptions, "destination"> = {}
+    ): Promise<ISipSession> {
         return this.call({ ...options, destination });
     }
 
-    async accept(invitation: SipInvitation, options: AnswerOptions = {}): Promise<ISipSession> {
+    async accept(
+        invitation: SipInvitation,
+        options: AnswerOptions = {}
+    ): Promise<ISipSession> {
         return this.answer(invitation, options);
     }
 
@@ -220,12 +281,18 @@ export class SipClient {
 
     // ─── EventEmitter ────────────────────────────────────────────────────────
 
-    on<K extends keyof SipEventMap>(event: K, listener: (...args: SipEventMap[K]) => void): this {
+    on<K extends keyof SipEventMap>(
+        event: K,
+        listener: (...args: SipEventMap[K]) => void
+    ): this {
         this.emitter.on(event, listener);
         return this;
     }
 
-    off<K extends keyof SipEventMap>(event: K, listener: (...args: SipEventMap[K]) => void): this {
+    off<K extends keyof SipEventMap>(
+        event: K,
+        listener: (...args: SipEventMap[K]) => void
+    ): this {
         this.emitter.off(event, listener);
         return this;
     }
@@ -234,16 +301,16 @@ export class SipClient {
 
     private setupNetworkMonitoring() {
         if (this.networkMonitoringEnabled) return;
-        if (typeof window !== 'undefined' && window.addEventListener) {
-            window.addEventListener('online', this.handleOnline);
+        if (typeof window !== "undefined" && window.addEventListener) {
+            window.addEventListener("online", this.handleOnline);
             this.networkMonitoringEnabled = true;
         }
     }
 
     private cleanupNetworkMonitoring() {
         if (!this.networkMonitoringEnabled) return;
-        if (typeof window !== 'undefined' && window.removeEventListener) {
-            window.removeEventListener('online', this.handleOnline);
+        if (typeof window !== "undefined" && window.removeEventListener) {
+            window.removeEventListener("online", this.handleOnline);
         }
         this.networkMonitoringEnabled = false;
     }
@@ -251,18 +318,26 @@ export class SipClient {
     private handleOnline = () => {
         if (!this.started || this.intentionalDisconnect) return;
 
-        if (this.connectionState === 'connected' || this.connectionState === 'registered') {
+        if (
+            this.connectionState === "connected" ||
+            this.connectionState === "registered"
+        ) {
             // The network changed under a socket that still looks fine; make sure it really is.
             // One failed ping is enough here, there is no point waiting for a second one.
             this.pingFailures = PING_FAILURES_BEFORE_RECONNECT - 1;
             this.checkHealth().catch(() => undefined);
             return;
         }
-        if (this.connectionState !== 'disconnected') return;
+        if (this.connectionState !== "disconnected") return;
 
         // Being back online is new information: retry right away, even if the previous
         // outage had already used up every attempt.
-        this.onSipLog?.("info", "sip.Client", SipLogCode.NetworkOnline, "Conectividade de rede restaurada. Tentando reconectar...");
+        this.onSipLog?.(
+            "info",
+            "sip.Client",
+            SipLogCode.NetworkOnline,
+            "Conectividade de rede restaurada. Tentando reconectar..."
+        );
         this.reconnectAttempt = 0;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
@@ -275,7 +350,9 @@ export class SipClient {
 
     public get activeSession(): ISipSession | undefined {
         if (this.activeSessionId) {
-            const session = this.sessions.find(s => s.id === this.activeSessionId);
+            const session = this.sessions.find(
+                (s) => s.id === this.activeSessionId
+            );
             if (session) return session;
         }
         return this.sessions[this.sessions.length - 1];
@@ -303,18 +380,29 @@ export class SipClient {
         if (this.connectionState !== state) {
             this.connectionState = state;
             this.onConnectionStateChange?.(state);
-            this.emitter.emit('connection-state', state);
+            this.emitter.emit("connection-state", state);
         }
     }
 
     private enqueue<T>(op: () => Promise<T>): Promise<T> {
         const result = this.operationLock.then(op, op);
-        this.operationLock = result.then(() => undefined, () => undefined);
+        this.operationLock = result.then(
+            () => undefined,
+            () => undefined
+        );
         return result;
     }
 
-    private handleSipLog = (level: string, category: string, label: string, content: string) => {
-        const safeContent = this.options.logRedaction === false ? content : redactSipLog(content);
+    private handleSipLog = (
+        level: string,
+        category: string,
+        label: string,
+        content: string
+    ) => {
+        const safeContent =
+            this.options.logRedaction === false
+                ? content
+                : redactSipLog(content);
         this.onSipLog?.(level, category, label, safeContent);
     };
 
@@ -335,41 +423,69 @@ export class SipClient {
         this.started = true;
         this.startHealthTimer();
 
-        if (this.connectionState === 'registered' && provider.refreshRegistration) {
+        if (
+            this.connectionState === "registered" &&
+            provider.refreshRegistration
+        ) {
             await provider.refreshRegistration();
             this.scheduleRegistrationExpiry();
             return this.getRegisterResult();
         }
 
-        this.setConnectionState('connecting');
+        this.setConnectionState("connecting");
 
         try {
-            if (this.connectionState !== 'disconnected') {
+            if (this.connectionState !== "disconnected") {
                 await provider.unregister();
             }
-        } catch (_) { /* no active UA yet */ }
+        } catch (_) {
+            /* no active UA yet */
+        }
 
         const internalUserAgentDelegate: ISipUserAgentDelegate = {
             onConnect: (data) => {
-                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
-                this.setConnectionState('connected');
+                if (
+                    generation !== this.lifecycleGeneration ||
+                    this.intentionalDisconnect
+                )
+                    return;
+                this.setConnectionState("connected");
                 this.reconnectAttempt = 0;
                 this.onUserAgent.onConnect?.(data);
-                this.emitter.emit('connect');
+                this.emitter.emit("connect");
             },
             onDisconnect: (error) => {
-                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
-                this.setConnectionState('disconnected');
+                if (
+                    generation !== this.lifecycleGeneration ||
+                    this.intentionalDisconnect
+                )
+                    return;
+                this.setConnectionState("disconnected");
                 this.onUserAgent.onDisconnect?.(error);
-                this.emitter.emit('disconnect', error);
+                this.emitter.emit("disconnect", error);
                 // While a reconnect attempt is running it owns the retry (it may be the one dropping the socket).
-                if (!this.intentionalDisconnect && this.autoReconnect && !this.reconnecting) {
-                    this.onSipLog?.("warn", "sip.Client", SipLogCode.TransportDisconnected, "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão...");
+                if (
+                    !this.intentionalDisconnect &&
+                    this.autoReconnect &&
+                    !this.reconnecting
+                ) {
+                    this.onSipLog?.(
+                        "warn",
+                        "sip.Client",
+                        SipLogCode.TransportDisconnected,
+                        "Desconexão inesperada do WebSocket. Iniciando tentativas de reconexão..."
+                    );
                     this.triggerReconnection();
                 }
             },
             onInvite: (invitation) => {
-                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) { invitation.reject().catch(() => undefined); return; }
+                if (
+                    generation !== this.lifecycleGeneration ||
+                    this.intentionalDisconnect
+                ) {
+                    invitation.reject().catch(() => undefined);
+                    return;
+                }
                 this.playRingtone();
 
                 const originalAccept = invitation.accept.bind(invitation);
@@ -391,50 +507,70 @@ export class SipClient {
                 };
 
                 this.onUserAgent.onInvite?.(invitation);
-                this.emitter.emit('invite', invitation);
+                this.emitter.emit("invite", invitation);
             },
             onMessage: (msg) => {
                 this.onUserAgent.onMessage?.(msg);
-                this.emitter.emit('message', msg);
+                this.emitter.emit("message", msg);
             },
             onNotify: (n) => {
                 this.onUserAgent.onNotify?.(n);
-                this.emitter.emit('notify', n);
+                this.emitter.emit("notify", n);
             },
             onRefer: (r) => {
                 this.onUserAgent.onRefer?.(r);
-                this.emitter.emit('refer', r);
+                this.emitter.emit("refer", r);
             },
             onRegister: (r) => this.onUserAgent.onRegister?.(r),
             onSubscribe: (s) => {
                 this.onUserAgent.onSubscribe?.(s);
-                this.emitter.emit('subscribe', s);
+                this.emitter.emit("subscribe", s);
             },
             onPresence: (presence) => {
                 this.onUserAgent.onPresence?.(presence);
-                this.emitter.emit('presence', presence);
+                this.emitter.emit("presence", presence);
             },
         };
 
         const internalRegisterDelegate: ISipRegisterDelegate = {
-            onAccept: (data) => { if (generation === this.lifecycleGeneration && !this.intentionalDisconnect) this.handleRegistered(data); },
+            onAccept: (data) => {
+                if (
+                    generation === this.lifecycleGeneration &&
+                    !this.intentionalDisconnect
+                )
+                    this.handleRegistered(data);
+            },
             onReject: (error) => {
-                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
-                this.setConnectionState('error');
+                if (
+                    generation !== this.lifecycleGeneration ||
+                    this.intentionalDisconnect
+                )
+                    return;
+                this.setConnectionState("error");
                 this.onRegister.onReject?.(error);
-                this.emitter.emit('register-failed', error);
+                this.emitter.emit("register-failed", error);
             },
             onTrying: () => this.onRegister.onTrying?.(),
             onRedirect: (data) => this.onRegister.onRedirect?.(data),
             onUnregistered: () => {
-                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
-                if (this.connectionState === 'registered') this.setConnectionState('connected');
+                if (
+                    generation !== this.lifecycleGeneration ||
+                    this.intentionalDisconnect
+                )
+                    return;
+                if (this.connectionState === "registered")
+                    this.setConnectionState("connected");
                 this.onRegister.onUnregistered?.();
-                this.emitter.emit('unregistered');
+                this.emitter.emit("unregistered");
                 if (this.autoReconnect && !this.reconnecting) {
                     // The binding lapsed on a socket that still looks connected, which usually
                     // means the socket is dead: replace it instead of registering over it.
-                    this.onSipLog?.("warn", "sip.Client", SipLogCode.RegistrationLost, "Registro SIP perdido. Iniciando tentativas de reconexão...");
+                    this.onSipLog?.(
+                        "warn",
+                        "sip.Client",
+                        SipLogCode.RegistrationLost,
+                        "Registro SIP perdido. Iniciando tentativas de reconexão..."
+                    );
                     this.triggerReconnection(true);
                 }
             },
@@ -448,7 +584,7 @@ export class SipClient {
                 this.handleSipLog
             );
         } catch (error) {
-            this.setConnectionState('error');
+            this.setConnectionState("error");
             throw error;
         }
 
@@ -461,16 +597,21 @@ export class SipClient {
      * but not on the periodic refreshes of a registration that never dropped.
      */
     private handleRegistered(data?: unknown) {
-        const wasRegistered = this.connectionState === 'registered';
-        this.setConnectionState('registered');
+        const wasRegistered = this.connectionState === "registered";
+        this.setConnectionState("registered");
         this.reconnectAttempt = 0;
         this.pingFailures = 0;
         this.scheduleRegistrationExpiry();
         this.onRegister.onAccept?.(data);
-        this.emitter.emit('registered');
+        this.emitter.emit("registered");
         if (wasRegistered) return;
-        this.restorePresenceSubscriptions().catch(error => {
-            this.onSipLog?.('warn', 'sip.Client', SipLogCode.PresenceRestoreFailed, `Falha ao restaurar inscrições de presença: ${error}`);
+        this.restorePresenceSubscriptions().catch((error) => {
+            this.onSipLog?.(
+                "warn",
+                "sip.Client",
+                SipLogCode.PresenceRestoreFailed,
+                `Falha ao restaurar inscrições de presença: ${error}`
+            );
         });
     }
 
@@ -483,22 +624,28 @@ export class SipClient {
                 await this.doRegister();
                 return;
             }
-            this.setConnectionState('registered');
+            this.setConnectionState("registered");
             this.scheduleRegistrationExpiry();
         });
     }
 
-    async updateCredentials(credentials: SipCredentials): Promise<SipRegisterResult> {
+    async updateCredentials(
+        credentials: SipCredentials
+    ): Promise<SipRegisterResult> {
         return this.enqueue(async () => {
             for (const session of this.sessions) {
-                try { await session.bye(); } catch (_) { }
+                try {
+                    await session.bye();
+                } catch (_) {}
             }
             this.sessions = [];
             this.activeSessionId = undefined;
             this.clearTimers();
-            try { await (await this.getProvider()).unregister(); } catch (_) { }
+            try {
+                await (await this.getProvider()).unregister();
+            } catch (_) {}
             this.credentials = credentials;
-            this.connectionState = 'disconnected';
+            this.connectionState = "disconnected";
             // Like register(): an explicit request to come back online, even after disconnect().
             this.intentionalDisconnect = false;
             return this.doRegister();
@@ -511,18 +658,25 @@ export class SipClient {
      * duplicate REGISTER that can collide with theirs.
      */
     private scheduleRegistrationExpiry() {
-        if (this.registrationExpiryTimer) clearTimeout(this.registrationExpiryTimer);
+        if (this.registrationExpiryTimer)
+            clearTimeout(this.registrationExpiryTimer);
         this.registrationExpiryTimer = undefined;
         if (this.provider?.managesRegistrationRefresh) return;
-        const delay = Math.max(5, 3600 - this.registrationExpiringBuffer) * 1000;
+        const delay =
+            Math.max(5, 3600 - this.registrationExpiringBuffer) * 1000;
         this.registrationExpiryTimer = setTimeout(() => {
             this.registrationExpiryTimer = undefined;
             this.onRegister.onExpiring?.();
-            this.emitter.emit('registration-expiring');
+            this.emitter.emit("registration-expiring");
 
             if (this.autoRefreshRegistration && !this.intentionalDisconnect) {
-                this.refreshRegistration().catch(error => {
-                    this.onSipLog?.("error", "sip.Client", SipLogCode.RegistrationRefreshFailed, `Falha ao renovar registro SIP: ${error}`);
+                this.refreshRegistration().catch((error) => {
+                    this.onSipLog?.(
+                        "error",
+                        "sip.Client",
+                        SipLogCode.RegistrationRefreshFailed,
+                        `Falha ao renovar registro SIP: ${error}`
+                    );
                     if (this.autoReconnect) this.triggerReconnection();
                 });
             }
@@ -530,7 +684,12 @@ export class SipClient {
     }
 
     private getRegisterResult(): SipRegisterResult {
-        return this.provider?.getRegisterResult?.() ?? { userAgent: this.provider, registerer: null };
+        return (
+            this.provider?.getRegisterResult?.() ?? {
+                userAgent: this.provider,
+                registerer: null,
+            }
+        );
     }
 
     // ─── Reconnect / health ──────────────────────────────────────────────────
@@ -550,7 +709,7 @@ export class SipClient {
         this.reconnecting = true;
 
         try {
-            this.setConnectionState('connecting');
+            this.setConnectionState("connecting");
             if (!provider.reconnect) {
                 await provider.unregister().catch(() => {});
                 await this.doRegister();
@@ -559,16 +718,27 @@ export class SipClient {
             // Resolves only once registered again. Providers that report it through the
             // register delegate have already moved the state by now.
             await provider.reconnect({ force });
-            if (this.intentionalDisconnect || generation !== this.lifecycleGeneration) return;
-            if (this.connectionState !== 'registered') this.handleRegistered();
+            if (
+                this.intentionalDisconnect ||
+                generation !== this.lifecycleGeneration
+            )
+                return;
+            if (this.connectionState !== "registered") this.handleRegistered();
             // The signaling path is back; calls that lost their media path while it was
             // down (e.g. the device changed networks) can renegotiate now.
             for (const session of this.sessions) {
                 session.recoverMedia?.().catch(() => undefined);
             }
         } catch (error) {
-            const websocketUp = provider.getHealth?.().websocketConnected ?? false;
-            if (!this.intentionalDisconnect && generation === this.lifecycleGeneration) this.setConnectionState(websocketUp ? 'connected' : 'disconnected');
+            const websocketUp =
+                provider.getHealth?.().websocketConnected ?? false;
+            if (
+                !this.intentionalDisconnect &&
+                generation === this.lifecycleGeneration
+            )
+                this.setConnectionState(
+                    websocketUp ? "connected" : "disconnected"
+                );
             throw error;
         } finally {
             this.reconnecting = false;
@@ -586,29 +756,50 @@ export class SipClient {
     async checkHealth(): Promise<SipHealthStatus> {
         const provider = await this.getProvider();
         const providerHealth = provider.getHealth?.() ?? {};
-        let pingResult: { ok: boolean; latencyMs?: number; error?: string } | undefined;
+        let pingResult:
+            { ok: boolean; latencyMs?: number; error?: string } | undefined;
 
-        const online = this.connectionState === 'connected' || this.connectionState === 'registered';
+        const online =
+            this.connectionState === "connected" ||
+            this.connectionState === "registered";
         if (provider.ping && online && !this.reconnecting) {
             // A ping that outlives its registration must not count against the next one.
             const generation = this.lifecycleGeneration;
             pingResult = await provider.ping();
-            const stillOnline = this.connectionState === 'connected' || this.connectionState === 'registered';
-            if (this.started && !this.intentionalDisconnect && stillOnline && generation === this.lifecycleGeneration) this.handlePingResult(pingResult.ok);
+            const stillOnline =
+                this.connectionState === "connected" ||
+                this.connectionState === "registered";
+            if (
+                this.started &&
+                !this.intentionalDisconnect &&
+                stillOnline &&
+                generation === this.lifecycleGeneration
+            )
+                this.handlePingResult(pingResult.ok);
         }
 
         const status: SipHealthStatus = {
-            websocketConnected: providerHealth.websocketConnected ?? (this.connectionState === 'connected' || this.connectionState === 'registered'),
-            registered: providerHealth.registered ?? this.connectionState === 'registered',
+            websocketConnected:
+                providerHealth.websocketConnected ??
+                (this.connectionState === "connected" ||
+                    this.connectionState === "registered"),
+            registered:
+                providerHealth.registered ??
+                this.connectionState === "registered",
             connectionState: this.connectionState,
             activeSessions: this.sessions.length,
-            lastPingOkAt: pingResult?.ok ? new Date() : providerHealth.lastPingOkAt,
-            lastPingLatencyMs: pingResult?.latencyMs ?? providerHealth.lastPingLatencyMs,
-            lastPingError: pingResult?.ok ? undefined : pingResult?.error ?? providerHealth.lastPingError,
+            lastPingOkAt: pingResult?.ok
+                ? new Date()
+                : providerHealth.lastPingOkAt,
+            lastPingLatencyMs:
+                pingResult?.latencyMs ?? providerHealth.lastPingLatencyMs,
+            lastPingError: pingResult?.ok
+                ? undefined
+                : (pingResult?.error ?? providerHealth.lastPingError),
             checkedAt: new Date(),
         };
 
-        this.emitter.emit('health', status);
+        this.emitter.emit("health", status);
         return status;
     }
 
@@ -620,8 +811,14 @@ export class SipClient {
         this.pingFailures += 1;
         if (this.pingFailures < PING_FAILURES_BEFORE_RECONNECT) return;
         this.pingFailures = 0;
-        if (!this.started || this.intentionalDisconnect || !this.autoReconnect) return;
-        this.onSipLog?.("warn", "sip.Client", SipLogCode.HealthPingFailed, "PBX não responde ao ping SIP. Refazendo a conexão...");
+        if (!this.started || this.intentionalDisconnect || !this.autoReconnect)
+            return;
+        this.onSipLog?.(
+            "warn",
+            "sip.Client",
+            SipLogCode.HealthPingFailed,
+            "PBX não responde ao ping SIP. Refazendo a conexão..."
+        );
         this.triggerReconnection(true);
     }
 
@@ -631,32 +828,60 @@ export class SipClient {
      * restart doesn't bring every client back in the same instant.
      */
     private getReconnectDelay(attempt: number): number {
-        if (attempt <= 1) return Math.min(this.reconnectDelay, FIRST_RECONNECT_DELAY_MS);
-        const backoff = Math.min(this.reconnectDelay * Math.pow(2, attempt - 2), this.maxReconnectDelay);
-        return Math.min(this.maxReconnectDelay, Math.round(backoff * (0.85 + Math.random() * 0.3)));
+        if (attempt <= 1)
+            return Math.min(this.reconnectDelay, FIRST_RECONNECT_DELAY_MS);
+        const backoff = Math.min(
+            this.reconnectDelay * Math.pow(2, attempt - 2),
+            this.maxReconnectDelay
+        );
+        return Math.min(
+            this.maxReconnectDelay,
+            Math.round(backoff * (0.85 + Math.random() * 0.3))
+        );
     }
 
     private triggerReconnection(force = false) {
         if (force) this.forceNextReconnect = true;
-        if (this.reconnectTimer || this.reconnecting || !this.autoReconnect || this.intentionalDisconnect) return;
+        if (
+            this.reconnectTimer ||
+            this.reconnecting ||
+            !this.autoReconnect ||
+            this.intentionalDisconnect
+        )
+            return;
         if (this.reconnectAttempt >= this.maxReconnectAttempts) {
-            this.onSipLog?.("error", "sip.Client", SipLogCode.ReconnectExhausted, `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`);
-            this.emitter.emit('reconnect-failed', this.reconnectAttempt);
+            this.onSipLog?.(
+                "error",
+                "sip.Client",
+                SipLogCode.ReconnectExhausted,
+                `Número máximo de tentativas de reconexão atingido (${this.maxReconnectAttempts}).`
+            );
+            this.emitter.emit("reconnect-failed", this.reconnectAttempt);
             return;
         }
 
         const nextAttempt = this.reconnectAttempt + 1;
         const delay = this.getReconnectDelay(nextAttempt);
-        this.emitter.emit('reconnecting', nextAttempt, delay);
+        this.emitter.emit("reconnecting", nextAttempt, delay);
         this.reconnectTimer = setTimeout(async () => {
             this.reconnectTimer = undefined;
             if (this.intentionalDisconnect) return;
             this.reconnectAttempt = nextAttempt;
-            this.onSipLog?.("info", "sip.Client", SipLogCode.ReconnectAttempt, `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`);
+            this.onSipLog?.(
+                "info",
+                "sip.Client",
+                SipLogCode.ReconnectAttempt,
+                `Tentativa de reconexão ${this.reconnectAttempt}/${this.maxReconnectAttempts} (delay: ${delay}ms)...`
+            );
             try {
                 await this.enqueue(() => this.doReconnect());
             } catch (error) {
-                this.onSipLog?.("error", "sip.Client", SipLogCode.ReconnectAttemptFailed, `Falha na tentativa de reconexão: ${error}`);
+                this.onSipLog?.(
+                    "error",
+                    "sip.Client",
+                    SipLogCode.ReconnectAttemptFailed,
+                    `Falha na tentativa de reconexão: ${error}`
+                );
                 this.triggerReconnection();
             }
         }, delay);
@@ -664,10 +889,16 @@ export class SipClient {
 
     // ─── Presence / BLF ──────────────────────────────────────────────────────
 
-    async subscribePresence(target: string, options?: PresenceSubscribeOptions): Promise<void> {
+    async subscribePresence(
+        target: string,
+        options?: PresenceSubscribeOptions
+    ): Promise<void> {
         const provider = await this.getProvider();
         if (!provider.subscribePresence) {
-            throw new SipError('unsupported', "Presence subscription is not supported by the selected SIP provider.");
+            throw new SipError(
+                "unsupported",
+                "Presence subscription is not supported by the selected SIP provider."
+            );
         }
         this.presenceSubscriptions.set(target, options);
         await provider.subscribePresence(target, options);
@@ -681,31 +912,50 @@ export class SipClient {
 
     private async restorePresenceSubscriptions(): Promise<void> {
         const provider = await this.getProvider();
-        if (!provider.subscribePresence || this.presenceSubscriptions.size === 0) return;
-        await Promise.all([...this.presenceSubscriptions.entries()].map(
-            ([target, options]) => provider.subscribePresence!(target, options).catch(() => undefined)
-        ));
+        if (
+            !provider.subscribePresence ||
+            this.presenceSubscriptions.size === 0
+        )
+            return;
+        await Promise.all(
+            [...this.presenceSubscriptions.entries()].map(([target, options]) =>
+                provider.subscribePresence!(target, options).catch(
+                    () => undefined
+                )
+            )
+        );
     }
 
     onPresence(listener: (presence: PresenceEvent) => void): this {
-        return this.on('presence', listener);
+        return this.on("presence", listener);
     }
 
     // ─── Sounds ──────────────────────────────────────────────────────────────
 
-    private playRingtone() { this.playSound('ringtone'); }
-    private stopRingtone() { this.stopSound('ringtone'); }
-    private playRingback() { this.playSound('ringback'); }
-    private stopRingback() { this.stopSound('ringback'); }
+    private playRingtone() {
+        this.playSound("ringtone");
+    }
+    private stopRingtone() {
+        this.stopSound("ringtone");
+    }
+    private playRingback() {
+        this.playSound("ringback");
+    }
+    private stopRingback() {
+        this.stopSound("ringback");
+    }
 
-    private playSound(kind: 'ringtone' | 'ringback') {
-        if (typeof window === 'undefined') return;
+    private playSound(kind: "ringtone" | "ringback") {
+        if (typeof window === "undefined") return;
         const sounds = this.options.sounds;
         const source = sounds === false ? false : sounds?.[kind];
         if (source === false) return;
 
         const synthesizer = this.synthesizers[kind];
-        const synthesize = () => kind === 'ringtone' ? synthesizer.playRingtone() : synthesizer.playRingback();
+        const synthesize = () =>
+            kind === "ringtone"
+                ? synthesizer.playRingtone()
+                : synthesizer.playRingback();
         if (!source) {
             synthesize();
             return;
@@ -725,11 +975,14 @@ export class SipClient {
         }
     }
 
-    private stopSound(kind: 'ringtone' | 'ringback') {
+    private stopSound(kind: "ringtone" | "ringback") {
         this.synthesizers[kind].stop();
         const audio = this.soundElements[kind];
         if (audio) {
-            try { audio.pause(); audio.currentTime = 0; } catch (_) {}
+            try {
+                audio.pause();
+                audio.currentTime = 0;
+            } catch (_) {}
         }
     }
 
@@ -743,40 +996,67 @@ export class SipClient {
     private trackSession(session: ISipSession) {
         this.sessions.push(session);
         this.activeSessionId = session.id;
-        this.emitter.emit('session', session);
+        this.emitter.emit("session", session);
 
         const removeSession = () => {
-            this.sessions = this.sessions.filter(s => s.id !== session.id);
+            this.sessions = this.sessions.filter((s) => s.id !== session.id);
             if (this.activeSessionId === session.id) {
-                this.activeSessionId = this.sessions[this.sessions.length - 1]?.id;
+                this.activeSessionId =
+                    this.sessions[this.sessions.length - 1]?.id;
             }
         };
 
-        session.on?.('state', state => this.emitter.emit('session-state', session, state));
-        session.on?.('progress', event => this.emitter.emit('session-progress', session, event));
-        session.on?.('established', () => this.emitter.emit('session-established', session));
-        session.on?.('failed', event => this.emitter.emit('session-failed', session, event));
-        session.on?.('terminated', event => {
+        session.on?.("state", (state) =>
+            this.emitter.emit("session-state", session, state)
+        );
+        session.on?.("progress", (event) =>
+            this.emitter.emit("session-progress", session, event)
+        );
+        session.on?.("established", () =>
+            this.emitter.emit("session-established", session)
+        );
+        session.on?.("failed", (event) =>
+            this.emitter.emit("session-failed", session, event)
+        );
+        session.on?.("terminated", (event) => {
             removeSession();
-            this.emitter.emit('session-terminated', session, event);
+            this.emitter.emit("session-terminated", session, event);
         });
-        session.on?.('hold', event => this.emitter.emit('session-hold', session, event));
-        session.on?.('unhold', event => this.emitter.emit('session-unhold', session, event));
-        session.on?.('dtmf', event => this.emitter.emit('session-dtmf', session, event));
-        session.on?.('refer', event => this.emitter.emit('session-refer', session, event));
-        session.on?.('transfer-progress', event => this.emitter.emit('session-transfer-progress', session, event));
-        session.on?.('media-state', event => this.emitter.emit('session-media-state', session, event));
-        session.on?.('media-failed', event => this.emitter.emit('session-media-failed', session, event));
-        session.on?.('quality', snapshot => this.emitter.emit('session-quality', session, snapshot));
+        session.on?.("hold", (event) =>
+            this.emitter.emit("session-hold", session, event)
+        );
+        session.on?.("unhold", (event) =>
+            this.emitter.emit("session-unhold", session, event)
+        );
+        session.on?.("dtmf", (event) =>
+            this.emitter.emit("session-dtmf", session, event)
+        );
+        session.on?.("refer", (event) =>
+            this.emitter.emit("session-refer", session, event)
+        );
+        session.on?.("transfer-progress", (event) =>
+            this.emitter.emit("session-transfer-progress", session, event)
+        );
+        session.on?.("media-state", (event) =>
+            this.emitter.emit("session-media-state", session, event)
+        );
+        session.on?.("media-failed", (event) =>
+            this.emitter.emit("session-media-failed", session, event)
+        );
+        session.on?.("quality", (snapshot) =>
+            this.emitter.emit("session-quality", session, snapshot)
+        );
 
         let userOnTerminate = session.onTerminate;
         const internalCleanup = () => {
             removeSession();
             userOnTerminate?.();
         };
-        Object.defineProperty(session, 'onTerminate', {
+        Object.defineProperty(session, "onTerminate", {
             get: () => internalCleanup,
-            set: (fn: (() => void) | undefined) => { userOnTerminate = fn; },
+            set: (fn: (() => void) | undefined) => {
+                userOnTerminate = fn;
+            },
             configurable: true,
             enumerable: true,
         });
@@ -789,12 +1069,13 @@ export class SipClient {
         try {
             const session = await (await this.getProvider()).call(options);
             if (session.on) {
-                session.on('progress', event => {
-                    if (event?.hasEarlyMedia || event?.statusCode === 183) this.stopRingback();
+                session.on("progress", (event) => {
+                    if (event?.hasEarlyMedia || event?.statusCode === 183)
+                        this.stopRingback();
                 });
-                session.on('established', () => this.stopRingback());
-                session.on('failed', () => this.stopRingback());
-                session.on('terminated', () => this.stopRingback());
+                session.on("established", () => this.stopRingback());
+                session.on("failed", () => this.stopRingback());
+                session.on("terminated", () => this.stopRingback());
             } else {
                 // Custom providers without an event bus only have the legacy callbacks.
                 const originalOnTerminate = session.onTerminate;
@@ -815,30 +1096,58 @@ export class SipClient {
         }
     }
 
-    async answer(invitation: SipInvitation, options: AnswerOptions): Promise<ISipSession> {
+    async answer(
+        invitation: SipInvitation,
+        options: AnswerOptions
+    ): Promise<ISipSession> {
         this.stopRingtone();
-        const session = await (await this.getProvider()).answer(invitation, options);
+        const session = await (
+            await this.getProvider()
+        ).answer(invitation, options);
         this.trackSession(session);
         return session;
     }
 
-    mute(): void { this.activeSession?.mute(); }
-    unmute(): void { this.activeSession?.unmute(); }
-    muteVideo(): void { this.activeSession?.muteVideo(); }
-    unmuteVideo(): void { this.activeSession?.unmuteVideo(); }
+    mute(): void {
+        this.activeSession?.mute();
+    }
+    unmute(): void {
+        this.activeSession?.unmute();
+    }
+    muteVideo(): void {
+        this.activeSession?.muteVideo();
+    }
+    unmuteVideo(): void {
+        this.activeSession?.unmuteVideo();
+    }
 
-    async hold(): Promise<void> { await this.activeSession?.hold(); }
-    async unhold(): Promise<void> { await this.activeSession?.unhold(); }
-    isOnHold(): { local: boolean; remote: boolean } { return this.activeSession?.isOnHold?.() ?? { local: false, remote: false }; }
+    async hold(): Promise<void> {
+        await this.activeSession?.hold();
+    }
+    async unhold(): Promise<void> {
+        await this.activeSession?.unhold();
+    }
+    isOnHold(): { local: boolean; remote: boolean } {
+        return (
+            this.activeSession?.isOnHold?.() ?? { local: false, remote: false }
+        );
+    }
 
-    async upgradeToVideo(): Promise<void> { await this.activeSession?.upgradeToVideo?.(); }
-    async downgradeToAudio(): Promise<void> { await this.activeSession?.downgradeToAudio?.(); }
+    async upgradeToVideo(): Promise<void> {
+        await this.activeSession?.upgradeToVideo?.();
+    }
+    async downgradeToAudio(): Promise<void> {
+        await this.activeSession?.downgradeToAudio?.();
+    }
 
     async transfer(target: string | ISipSession): Promise<void> {
         await this.activeSession?.transfer(target);
     }
 
-    async attendedTransfer(firstSession: ISipSession, secondSession: ISipSession): Promise<void> {
+    async attendedTransfer(
+        firstSession: ISipSession,
+        secondSession: ISipSession
+    ): Promise<void> {
         await firstSession.hold();
         await firstSession.transfer(secondSession);
         await secondSession.bye();
@@ -871,32 +1180,54 @@ export class SipClient {
 
     async diagnose(): Promise<SoftphoneDiagnostics> {
         const warnings: string[] = [];
-        const secureContext = typeof window === 'undefined' ? true : window.isSecureContext;
-        const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
-        const hasSpeakerSelection = typeof HTMLMediaElement !== 'undefined' && typeof HTMLMediaElement.prototype.setSinkId === 'function';
+        const secureContext =
+            typeof window === "undefined" ? true : window.isSecureContext;
+        const hasMediaDevices =
+            typeof navigator !== "undefined" &&
+            !!navigator.mediaDevices?.getUserMedia;
+        const hasSpeakerSelection =
+            typeof HTMLMediaElement !== "undefined" &&
+            typeof HTMLMediaElement.prototype.setSinkId === "function";
         let hasMicrophonePermission = false;
 
-        if (!secureContext) warnings.push('WebRTC exige HTTPS ou localhost para microfone/câmera funcionar corretamente.');
-        if (!hasMediaDevices) warnings.push('Browser não expõe navigator.mediaDevices.getUserMedia.');
-        if (!hasSpeakerSelection) warnings.push('Este browser não permite selecionar saída de áudio via setSinkId.');
+        if (!secureContext)
+            warnings.push(
+                "WebRTC exige HTTPS ou localhost para microfone/câmera funcionar corretamente."
+            );
+        if (!hasMediaDevices)
+            warnings.push(
+                "Browser não expõe navigator.mediaDevices.getUserMedia."
+            );
+        if (!hasSpeakerSelection)
+            warnings.push(
+                "Este browser não permite selecionar saída de áudio via setSinkId."
+            );
 
         try {
             const devices = await this.devices.list();
-            hasMicrophonePermission = devices.some(device => device.kind === 'microphone' && !device.label.includes('sem permissão'));
+            hasMicrophonePermission = devices.some(
+                (device) =>
+                    device.kind === "microphone" &&
+                    !device.label.includes("sem permissão")
+            );
         } catch {
-            warnings.push('Não foi possível listar dispositivos de mídia.');
+            warnings.push("Não foi possível listar dispositivos de mídia.");
         }
 
         const health = await this.checkHealth().catch(() => undefined);
         const diagnostics: SoftphoneDiagnostics = {
-            browser: typeof navigator === 'undefined' ? 'server' : navigator.userAgent,
+            browser:
+                typeof navigator === "undefined"
+                    ? "server"
+                    : navigator.userAgent,
             secureContext,
             hasMediaDevices,
             hasMicrophonePermission,
             hasSpeakerSelection,
             websocketConfigured: !!this.credentials.server,
             websocketReachable: health?.websocketConnected,
-            sipRegistered: health?.registered ?? this.connectionState === 'registered',
+            sipRegistered:
+                health?.registered ?? this.connectionState === "registered",
             iceServersConfigured: !!this.credentials.iceServers?.length,
             warnings,
             checkedAt: new Date(),
@@ -928,13 +1259,17 @@ export class SipClient {
         this.cleanupNetworkMonitoring();
 
         for (const session of [...this.sessions]) {
-            try { await session.bye(); } catch (_) { /* continue */ }
+            try {
+                await session.bye();
+            } catch (_) {
+                /* continue */
+            }
         }
 
         await (await this.getProvider()).unregister();
         this.sessions = [];
         this.activeSessionId = undefined;
-        this.setConnectionState('disconnected');
+        this.setConnectionState("disconnected");
     }
 
     private clearTimers(): void {
@@ -970,8 +1305,8 @@ export * from "./core/errors.js";
 export { CallStatsSampler } from "./core/utils.js";
 
 export function createSoftphone(config: CreateSoftphoneConfig): SipClient {
-    const preset = config.preset ?? 'asterisk';
-    const isGeneric = preset === 'generic';
+    const preset = config.preset ?? "asterisk";
+    const isGeneric = preset === "generic";
 
     return new SipClient(
         {
@@ -988,7 +1323,7 @@ export function createSoftphone(config: CreateSoftphoneConfig): SipClient {
         },
         {
             preset,
-            provider: config.provider ?? 'sipjs',
+            provider: config.provider ?? "sipjs",
             sounds: config.sounds,
             autoReconnect: true,
             autoRefreshRegistration: true,

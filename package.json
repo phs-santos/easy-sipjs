@@ -1,83 +1,85 @@
 {
-	"name": "easy-sipjs",
-	"version": "3.1.1",
-	"description": "Abstração simplificada do SIP.js para projetos WebRTC.",
-	"main": "dist/index.js",
-	"types": "dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"default": "./dist/index.js"
-		},
-		"./sipjs": {
-			"types": "./dist/sipjs.d.ts",
-			"default": "./dist/sipjs.js"
-		},
-		"./jssip": {
-			"types": "./dist/jssip.d.ts",
-			"default": "./dist/jssip.js"
-		},
-		"./vue": {
-			"types": "./dist/vue/useSipClient.d.ts",
-			"default": "./dist/vue/useSipClient.js"
-		}
-	},
-	"files": [
-		"dist",
-		"!dist/**/*.map",
-		"README.md",
-		"LICENSE",
-		"CHANGELOG.md"
-	],
-	"type": "module",
-	"sideEffects": false,
-	"scripts": {
-		"build": "tsc && npm run bundle",
-		"bundle": "esbuild src/index.ts --bundle --minify --sourcemap --format=iife --global-name=EasySip --outfile=dist/easy-sip.min.js",
-		"test": "vitest run",
-		"lint": "eslint .",
-		"typecheck": "tsc --noEmit",
-		"release": "node scripts/release.js",
-		"version": "node scripts/update-readme-version.js && git add README.md",
-		"prepublishOnly": "npm run lint && npm test && npm run build"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/phs-santos/easy-sipjs.git"
-	},
-	"keywords": [
-		"sip",
-		"voip",
-		"webrtc",
-		"sip.js"
-	],
-	"author": "Paulo Souza <paulo18santos2000@gmail.com>",
-	"bugs": {
-		"url": "https://github.com/phs-santos/easy-sipjs/issues"
-	},
-	"license": "ISC",
-	"devDependencies": {
-		"@eslint/js": "^10.0.1",
-		"@types/jssip": "^3.5.3",
-		"@types/node": "^22.10.7",
-		"esbuild": "^0.28.1",
-		"eslint": "^10.12.0",
-		"globals": "^17.13.0",
-		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.71.0",
-		"vitest": "^4.1.10",
-		"vue": "^3.5.21"
-	},
-	"peerDependencies": {
-		"vue": ">=3.3.0"
-	},
-	"peerDependenciesMeta": {
-		"vue": {
-			"optional": true
-		}
-	},
-	"dependencies": {
-		"jssip": "^3.13.5",
-		"sip.js": "^0.21.2"
-	}
+    "name": "easy-sipjs",
+    "version": "3.1.2",
+    "description": "Abstração simplificada do SIP.js para projetos WebRTC.",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./sipjs": {
+            "types": "./dist/sipjs.d.ts",
+            "default": "./dist/sipjs.js"
+        },
+        "./jssip": {
+            "types": "./dist/jssip.d.ts",
+            "default": "./dist/jssip.js"
+        },
+        "./vue": {
+            "types": "./dist/vue/useSipClient.d.ts",
+            "default": "./dist/vue/useSipClient.js"
+        }
+    },
+    "files": [
+        "dist",
+        "!dist/**/*.map",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md"
+    ],
+    "type": "module",
+    "sideEffects": false,
+    "scripts": {
+        "build": "tsc && npm run bundle",
+        "bundle": "esbuild src/index.ts --bundle --minify --sourcemap --format=iife --global-name=EasySip --outfile=dist/easy-sip.min.js",
+        "test": "vitest run",
+        "lint": "eslint .",
+        "format": "prettier --write .",
+        "typecheck": "tsc --noEmit",
+        "release": "node scripts/release.js",
+        "version": "node scripts/update-readme-version.js && git add README.md",
+        "prepublishOnly": "npm run lint && npm test && npm run build"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/phs-santos/easy-sipjs.git"
+    },
+    "keywords": [
+        "sip",
+        "voip",
+        "webrtc",
+        "sip.js"
+    ],
+    "author": "Paulo Souza <paulo18santos2000@gmail.com>",
+    "bugs": {
+        "url": "https://github.com/phs-santos/easy-sipjs/issues"
+    },
+    "license": "ISC",
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/jssip": "^3.5.3",
+        "@types/node": "^22.10.7",
+        "esbuild": "^0.28.1",
+        "eslint": "^10.12.0",
+        "globals": "^17.13.0",
+        "prettier": "^3.9.10",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.71.0",
+        "vitest": "^4.1.10",
+        "vue": "^3.5.21"
+    },
+    "peerDependencies": {
+        "vue": ">=3.3.0"
+    },
+    "peerDependenciesMeta": {
+        "vue": {
+            "optional": true
+        }
+    },
+    "dependencies": {
+        "jssip": "^3.13.5",
+        "sip.js": "^0.21.2"
+    }
 }

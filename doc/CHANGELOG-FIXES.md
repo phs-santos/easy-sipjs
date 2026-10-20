@@ -1,6 +1,7 @@
 # Correções de estabilização (base 3.1.1)
 
 ## FIX-001 — Timer ICE pendente no JsSIP
+
 - **Classificação:** risco identificado por inspeção; teste de regressão adicionado.
 - **Origem:** `src/core/jssip-provider.ts`, listener `icecandidate` de `JsSIPSession`.
 - **Causa provável:** timer agendado poderia sobreviver ao término e chamar `ready()` fora do ciclo de vida.
@@ -10,6 +11,7 @@
 - **Impacto:** apenas provider JsSIP; sem alteração na API pública.
 
 ## FIX-002 — Listeners de RTCPeerConnection após término
+
 - **Classificação:** risco de listeners órfãos por inspeção.
 - **Origem:** `src/core/jssip-provider.ts` e `src/core/sipjs-provider.ts`.
 - **Causa provável:** listeners de eventos de mídia/conexão não removidos em todos os caminhos de cleanup.
@@ -19,6 +21,7 @@
 - **Impacto:** ambos providers; testar que mídia remota continua funcionando enquanto a sessão está ativa.
 
 ## FIX-003 — Screen sharing no encerramento (JsSIP)
+
 - **Classificação:** risco de recurso de mídia ativo após encerramento.
 - **Origem:** `src/core/jssip-provider.ts`, `screenTrack` e `cleanupAudio()`.
 - **Causa provável:** track de tela e `onended` podem permanecer vivos após a sessão terminar.
@@ -28,6 +31,7 @@
 - **Impacto:** JsSIP; testar também stopShare durante chamada e término normal.
 
 ## FIX-004 — Callback tardio de recuperação ICE (SIP.js)
+
 - **Classificação:** risco de operação tardia após encerramento.
 - **Origem:** `src/core/sipjs-provider.ts`, recuperação ICE e cleanup de mídia.
 - **Causa provável:** tarefas assíncronas podem continuar após a sessão ser finalizada.
@@ -37,6 +41,7 @@
 - **Impacto:** SIP.js; revisar re-INVITE, hold e reconexão em PBX real.
 
 ## FIX-005 — `unregister()` enfileirado e reconexão
+
 - **Classificação:** risco de concorrência identificado por inspeção.
 - **Origem:** `src/index.ts`, `unregister()` e `doUnregister()`.
 - **Causa provável:** a intenção de desconexão era sinalizada somente ao executar a tarefa na fila.
@@ -46,4 +51,5 @@
 - **Impacto:** `SipClient`, independentemente do provider; API pública preservada.
 
 ## Pendências
+
 Não declarar o patch completamente validado até que os testes, o build e os cenários de PBX/navegador sejam executados. Testes automatizados adicionais recomendados para FIX-002 no SIP.js e FIX-003 a FIX-005.

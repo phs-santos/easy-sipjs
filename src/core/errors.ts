@@ -3,16 +3,16 @@
  * can branch on `error.code` instead of matching message text.
  */
 export type SipErrorCode =
-    | 'not-initialized'
-    | 'invalid-uri'
-    | 'register-rejected'
-    | 'register-timeout'
-    | 'reinvite-rejected'
-    | 'reinvite-in-progress'
-    | 'transport-not-ready'
-    | 'media-unavailable'
-    | 'session-terminated'
-    | 'unsupported';
+    | "not-initialized"
+    | "invalid-uri"
+    | "register-rejected"
+    | "register-timeout"
+    | "reinvite-rejected"
+    | "reinvite-in-progress"
+    | "transport-not-ready"
+    | "media-unavailable"
+    | "session-terminated"
+    | "unsupported";
 
 export interface SipErrorDetails {
     statusCode?: number;
@@ -28,9 +28,13 @@ export class SipError extends Error {
     readonly response?: unknown;
     readonly cause?: unknown;
 
-    constructor(public readonly code: SipErrorCode, message: string, details: SipErrorDetails = {}) {
+    constructor(
+        public readonly code: SipErrorCode,
+        message: string,
+        details: SipErrorDetails = {}
+    ) {
         super(message);
-        this.name = 'SipError';
+        this.name = "SipError";
         this.statusCode = details.statusCode;
         this.reasonPhrase = details.reasonPhrase;
         this.response = details.response;
@@ -44,13 +48,13 @@ export class SipError extends Error {
  * the code is what to match on.
  */
 export const SipLogCode = {
-    NetworkOnline: 'network.online',
-    TransportDisconnected: 'transport.disconnected',
-    RegistrationLost: 'registration.lost',
-    RegistrationRefreshFailed: 'registration.refresh-failed',
-    ReconnectAttempt: 'reconnect.attempt',
-    ReconnectAttemptFailed: 'reconnect.attempt-failed',
-    ReconnectExhausted: 'reconnect.exhausted',
-    HealthPingFailed: 'health.ping-failed',
-    PresenceRestoreFailed: 'presence.restore-failed',
+    NetworkOnline: "network.online",
+    TransportDisconnected: "transport.disconnected",
+    RegistrationLost: "registration.lost",
+    RegistrationRefreshFailed: "registration.refresh-failed",
+    ReconnectAttempt: "reconnect.attempt",
+    ReconnectAttemptFailed: "reconnect.attempt-failed",
+    ReconnectExhausted: "reconnect.exhausted",
+    HealthPingFailed: "health.ping-failed",
+    PresenceRestoreFailed: "presence.restore-failed",
 } as const;

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Corrigido
+
 - JsSIP: o hold falhava atrás do dSIPRouter/Kamailio — o proxy reescreve o SDP do 200 OK e deixa o `Content-Length` 1 byte maior que o corpo, e o JsSIP descartava a resposta sem mandar o ACK. As mensagens recebidas agora têm o `Content-Length` recalculado (o provider SIP.js já fazia isso; a lógica virou `core/content-length.ts`, compartilhada).
 - JsSIP: `hold()`/`unhold()` só resolvem quando o PBX aceita o re-INVITE (antes resolviam ao enviar, e o app mostrava "em espera" sem confirmação); rejeitam com `session-terminated` se a chamada acabar antes. O JsSIP também passa a usar o `userAgentString`.
 - SIP.js: o `180 Ringing` de uma chamada recebida saía duas vezes (o sip.js já envia sozinho e a lib chamava `progress()` de novo).
@@ -19,27 +20,33 @@
 - `onSipLog` recebe avisos e erros do SIP.js mesmo sem `debug`; com `debug`, o JsSIP também envia o tráfego SIP (antes não enviava nada).
 
 ### Adicionado
+
 - Código de erro `session-terminated` em `SipError`.
 
 ### Alterado
+
 - `npm run release` publica no npm direto da máquina de quem roda (exige `npm login`), logo depois do push da tag. O workflow de publicação do GitHub Actions foi removido.
 
 ## [3.1.1] - 2026-10-20
 
 ### Alterado
+
 - `npm run release` substitui `deploy` e `release:*`: pergunta o que commitar e a versão, roda lint/testes/build, cria o commit de release e a tag e faz o push; o GitHub Actions publica no npm. Pré-releases (`-beta.N`) saem com a dist-tag `beta`.
 
 ### Removido
+
 - Exemplo `examples/softphone` do repositório.
 
 ## [3.1.0] - 2026-10-05
 
 ### Alterado
+
 - O preset `generic` passa a usar DTMF `auto` e a espera padrão do SIP.js; `asterisk`, `kamailio` e a ausência de preset continuam com SIP INFO e `a=inactive`.
 - SIP MESSAGE recebido (SIP.js) é respondido com 200 OK pela biblioteca. `message.accept()` continua existindo e não faz nada.
 - O pacote do npm não leva mais os sourcemaps do bundle IIFE (de 3,6 MB para ~750 KB) nem o `NPM.md`, que era idêntico ao README.
 
 ### Adicionado
+
 - Presets com efeito real e opções `dtmfMode`, `holdStrategy` (`asterisk-inactive`, `asterisk-sendonly`, `sipjs-default`) e `mediaRecovery` no cliente.
 - Recuperação de mídia mais rápida: reinício de ICE depois de 3 s em `disconnected` (antes só em `failed`, 15 a 30 s depois) e `session.recoverMedia()`, que o cliente chama nas chamadas em andamento quando o WebSocket volta.
 - `uniqueContact` nas credenciais, para vários registros simultâneos no mesmo ramal.
@@ -48,11 +55,13 @@
 - ESLint (`npm run lint`), `npm run typecheck` e workflows do GitHub Actions: CI em push/PR e publicação no npm por tag com trusted publishing.
 
 ### Corrigido
+
 - A recuperação de mídia avisa o SIP.js do reinício de ICE, que assim espera os candidatos novos antes de enviar a oferta.
 
 ## [3.0.0] - 2026-10-04
 
 ### Alterado (pode exigir ajuste)
+
 - `SipJSProvider`, `SipJSSession`, `JsSIPProvider` e `JsSIPSession` saíram do entry principal e passaram para `easy-sipjs/sipjs` e `easy-sipjs/jssip`. O entry principal continua exportando os tipos. Cada stack SIP agora é carregada sob demanda: com `provider: 'sipjs'` o bundle do app cai de ~553 KB para ~301 KB minificado.
 - `connect()`/`register()` só resolvem depois do 200 OK do REGISTER e rejeitam quando o registro é recusado ou não tem resposta (o erro traz `statusCode` e `reasonPhrase`). Antes resolviam assim que o REGISTER era enviado.
 - `hold()`, `unhold()`, `upgradeToVideo()` e `downgradeToAudio()` (SIP.js) esperam o outro lado aceitar o re-INVITE, rejeitam se ele recusar e lançam erro se já houver outro re-INVITE em andamento, em vez de retornar sem fazer nada.
@@ -62,6 +71,7 @@
 - `setRemoteVolume()` usa o volume do elemento de 0 a 1 e só cria o ganho Web Audio acima de 1.
 
 ### Adicionado
+
 - `iceGatheringTimeoutMs` (padrão 1000 ms) nas credenciais e em `createSoftphone()`: limita a espera por candidatos ICE, que era de até 5 s no SIP.js e sem limite no JsSIP.
 - `earlyMedia` em `CallOptions`: aplica o SDP do 183 e toca o áudio do PBX antes do atendimento.
 - `sounds: false` (ou `false` por som) para o app cuidar dos próprios toques.
@@ -69,6 +79,7 @@
 - `CallStatsSampler` e o campo `note` em `PresenceEvent`.
 
 ### Corrigido
+
 - O stream remoto é ligado ao elemento assim que o handler de mídia existe, não só em `Established`.
 - `failed` sai antes de `terminated` em chamadas recusadas, e `terminated` leva o código SIP.
 - Reconexão: primeira tentativa em até 500 ms, backoff com jitter, e o evento `online` zera o contador (antes o cliente desistia para sempre depois de `maxReconnectAttempts`).
@@ -84,32 +95,37 @@
 ## [2.7.0] - 2026-07-01
 
 ### Alterado
+
 - Exemplo `examples/softphone` migrado de React para **Vue 3 + Vite + TypeScript**.
 - UI do discador compactada para não cortar o botão inferior em telas com pouca altura.
 - Conteúdo principal agora usa scroll interno controlado (`100dvh`) em vez de cortar cards.
 - Monitor técnico permanece ao lado do telefone na tela inicial quando não há chamada ativa.
 
 ### Adicionado
+
 - Export `easy-sipjs/vue` com composable `useSipClient()` para projetos Vue.
 - Dependência `vue` marcada como peer dependency opcional.
 
 ### Removido
-- Export `easy-sipjs/react` e exemplo React.
 
+- Export `easy-sipjs/react` e exemplo React.
 
 ## [2.6.1] - 2026-07-01
 
 ### Corrigido
+
 - Desligamento local da chamada no softphone: a UI remove a sessão imediatamente e o core emite término local mesmo se o proxy/peer demorar a finalizar.
 - Layout da chamada ativa ajustado para não forçar scroll da página; cards técnicos usam scroll interno.
 
 ### Alterado
+
 - Monitor técnico passa a aparecer ao lado do discador na tela inicial quando não há ligação ativa.
 - Removidos textos explicativos da interface de demonstração que não agregavam ao teste do cliente.
 
 ## [2.6.0] - 2026-07-01
 
 ### Adicionado
+
 - `createSoftphone()` com presets `asterisk`, `kamailio` e `generic`.
 - `DeviceManager` exposto em `client.devices` com listagem, permissão e evento de mudança de headset/câmera.
 - `diagnose()` para validar HTTPS, MediaDevices, permissão de microfone, speaker selection, registro SIP e health check.
@@ -120,16 +136,19 @@
 - Resubscribe automático de presença/BLF após registro/reconexão.
 
 ### Alterado
+
 - Softphone de exemplo redesenhado com UX/UI premium: glassmorphism, hierarquia visual, status cards, diagnóstico, health check, qualidade de chamada.
 - `README.md` e `NPM.md` atualizados para explicar a API fácil e os novos recursos.
 
 ### Corrigido
+
 - Provider JsSIP implementa `getQuality()` para manter contrato `ISipSession` completo.
 - Logs SIP do exemplo deixam de exibir dados sensíveis quando a lib está com redaction ativo.
 
 ## [2.5.0] - 2026-07-01
 
 ### Adicionado
+
 - API amigável `connect`, `disconnect`, `dial`, `accept`, `reject`, `reconnect`, `refreshRegistration`, `checkHealth`, `subscribePresence` e `unsubscribePresence`.
 - Eventos ricos de sessão e health check via SIP OPTIONS.
 - Suporte inicial a presença/BLF, DTMF `auto`, cleanup de tracks e build ESM NodeNext.

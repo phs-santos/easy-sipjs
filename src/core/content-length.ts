@@ -7,8 +7,11 @@
 const encoder = new TextEncoder();
 
 export function withActualContentLength(raw: string): string {
-    const sep = raw.indexOf('\r\n\r\n');
+    const sep = raw.indexOf("\r\n\r\n");
     if (sep === -1) return raw;
     const length = encoder.encode(raw.slice(sep + 4)).length;
-    return raw.replace(/Content-Length:\s*\d+\r\n/i, `Content-Length: ${length}\r\n`);
+    return raw.replace(
+        /Content-Length:\s*\d+\r\n/i,
+        `Content-Length: ${length}\r\n`
+    );
 }

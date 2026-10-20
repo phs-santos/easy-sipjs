@@ -15,21 +15,21 @@ npm install easy-sipjs
 ## O jeito mais fácil
 
 ```ts
-import { createSoftphone } from 'easy-sipjs';
+import { createSoftphone } from "easy-sipjs";
 
 const phone = createSoftphone({
-  preset: 'asterisk',
-  domain: 'pbx.example.com',
-  extension: '1001',
-  password: 'senha-do-ramal',
-  websocketUrl: 'wss://pbx.example.com:8089/ws',
+    preset: "asterisk",
+    domain: "pbx.example.com",
+    extension: "1001",
+    password: "senha-do-ramal",
+    websocketUrl: "wss://pbx.example.com:8089/ws",
 });
 
-phone.on('invite', invitation => phone.accept(invitation));
-phone.on('health', status => console.log(status));
+phone.on("invite", (invitation) => phone.accept(invitation));
+phone.on("health", (status) => console.log(status));
 
 await phone.connect();
-await phone.dial('4002');
+await phone.dial("4002");
 ```
 
 O consumidor não precisa configurar `UserAgent`, `Registerer`, `Inviter`, `SessionState`, re-REGISTER ou detalhes internos do SIP.js.
@@ -53,26 +53,27 @@ O consumidor não precisa configurar `UserAgent`, `Registerer`, `Inviter`, `Sess
 - **Logs seguros**: redaction de Authorization, nonce, response, secrets e usuários SIP.
 - **ESM correto**: NodeNext com imports `.js` válidos.
 
-
-
 ## Vue 3
 
 A biblioteca expõe um composable opcional para projetos Vue:
 
 ```ts
-import { useSipClient } from 'easy-sipjs/vue';
+import { useSipClient } from "easy-sipjs/vue";
 
-const softphone = useSipClient({
-  domain: 'pbx.example.com',
-  phone: '1001',
-  secret: 'senha-do-ramal',
-  server: 'wss://pbx.example.com:8089/ws',
-}, {
-  preset: 'asterisk',
-  provider: 'sipjs',
-});
+const softphone = useSipClient(
+    {
+        domain: "pbx.example.com",
+        phone: "1001",
+        secret: "senha-do-ramal",
+        server: "wss://pbx.example.com:8089/ws",
+    },
+    {
+        preset: "asterisk",
+        provider: "sipjs",
+    }
+);
 
-await softphone.dial('4002');
+await softphone.dial("4002");
 ```
 
 ---
@@ -80,25 +81,28 @@ await softphone.dial('4002');
 ## Uso avançado com `SipClient`
 
 ```ts
-import { SipClient } from 'easy-sipjs';
+import { SipClient } from "easy-sipjs";
 
-const client = new SipClient({
-  domain: 'sip.meudominio.com',
-  phone: '4001',
-  secret: 'senha-do-ramal',
-  server: 'wss://rtc.meudominio.com:8089/ws',
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-}, {
-  preset: 'asterisk',
-  provider: 'sipjs',
-  autoReconnect: true,
-  autoRefreshRegistration: true,
-  logRedaction: true,
-  healthCheckIntervalMs: 30000,
-});
+const client = new SipClient(
+    {
+        domain: "sip.meudominio.com",
+        phone: "4001",
+        secret: "senha-do-ramal",
+        server: "wss://rtc.meudominio.com:8089/ws",
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    },
+    {
+        preset: "asterisk",
+        provider: "sipjs",
+        autoReconnect: true,
+        autoRefreshRegistration: true,
+        logRedaction: true,
+        healthCheckIntervalMs: 30000,
+    }
+);
 
-client.on('connection-state', state => console.log('estado:', state));
-client.on('invite', invitation => client.accept(invitation));
+client.on("connection-state", (state) => console.log("estado:", state));
+client.on("invite", (invitation) => client.accept(invitation));
 
 await client.connect();
 ```
@@ -114,8 +118,8 @@ const devices = await client.devices.list();
 const microphones = await client.devices.microphones();
 const speakers = await client.devices.speakers();
 
-client.devices.onChanged(devices => {
-  console.log('headset/câmera mudou', devices);
+client.devices.onChanged((devices) => {
+    console.log("headset/câmera mudou", devices);
 });
 
 client.devices.watch();
@@ -150,15 +154,21 @@ Exemplo de retorno:
 ## Tempo de chamada, early media e sons
 
 ```ts
-const client = new SipClient({
-  // ...credenciais
-  iceGatheringTimeoutMs: 1000, // padrão; aumente se o seu TURN demora para alocar o relay
-}, {
-  sounds: false, // o app toca os próprios sons; também aceita { ringtone: false, ringback: '/ringback.mp3' }
-});
+const client = new SipClient(
+    {
+        // ...credenciais
+        iceGatheringTimeoutMs: 1000, // padrão; aumente se o seu TURN demora para alocar o relay
+    },
+    {
+        sounds: false, // o app toca os próprios sons; também aceita { ringtone: false, ringback: '/ringback.mp3' }
+    }
+);
 
 // Toca o áudio do PBX (ringback, anúncios) antes do atendimento, a partir do 183.
-const session = await client.dial('4002', { remoteElement: audio, earlyMedia: true });
+const session = await client.dial("4002", {
+    remoteElement: audio,
+    earlyMedia: true,
+});
 ```
 
 - `iceGatheringTimeoutMs` limita a espera por candidatos ICE antes de enviar o SDP. Sem ele, um STUN/TURN que não responde atrasa cada chamada em vários segundos.
@@ -171,17 +181,17 @@ const session = await client.dial('4002', { remoteElement: audio, earlyMedia: tr
 
 ```ts
 const client = new SipClient(credentials, {
-  preset: 'generic',            // 'asterisk' (padrão), 'kamailio' ou 'generic'
-  dtmfMode: 'rtp-event',        // sobrepõe o preset
-  holdStrategy: 'asterisk-sendonly',
-  mediaRecovery: { maxAttempts: 3, disconnectedGraceMs: 2000 },
+    preset: "generic", // 'asterisk' (padrão), 'kamailio' ou 'generic'
+    dtmfMode: "rtp-event", // sobrepõe o preset
+    holdStrategy: "asterisk-sendonly",
+    mediaRecovery: { maxAttempts: 3, disconnectedGraceMs: 2000 },
 });
 ```
 
-| Preset | DTMF padrão | Espera (hold) |
-| --- | --- | --- |
-| `asterisk`, `kamailio` | `sip-info` | `a=inactive` (`asterisk-inactive`) |
-| `generic` | `auto` (RTP, depois INFO) | a do SIP.js (`sipjs-default`) |
+| Preset                 | DTMF padrão               | Espera (hold)                      |
+| ---------------------- | ------------------------- | ---------------------------------- |
+| `asterisk`, `kamailio` | `sip-info`                | `a=inactive` (`asterisk-inactive`) |
+| `generic`              | `auto` (RTP, depois INFO) | a do SIP.js (`sipjs-default`)      |
 
 - `mediaRecovery`: quando o ICE fica `disconnected` por mais de 3 s, ou `failed`, a sessão reinicia o ICE com um re-INVITE. Depois que o WebSocket reconecta, as chamadas em andamento fazem o mesmo.
 - `uniqueContact: true` nas credenciais faz o SIP.js gerar um Contact único por instância, para várias abas ou aparelhos no mesmo ramal ficarem registrados juntos (o PBX precisa permitir mais de um contato).
@@ -192,18 +202,18 @@ const client = new SipClient(credentials, {
 ## Erros e logs
 
 ```ts
-import { SipError, SipLogCode } from 'easy-sipjs';
+import { SipError, SipLogCode } from "easy-sipjs";
 
 try {
-  await client.connect();
+    await client.connect();
 } catch (error) {
-  if (error instanceof SipError && error.code === 'register-rejected') {
-    console.log(error.statusCode, error.reasonPhrase); // 403 Forbidden
-  }
+    if (error instanceof SipError && error.code === "register-rejected") {
+        console.log(error.statusCode, error.reasonPhrase); // 403 Forbidden
+    }
 }
 
 client.onSipLog = (level, category, label, content) => {
-  if (label === SipLogCode.ReconnectExhausted) avisarUsuario();
+    if (label === SipLogCode.ReconnectExhausted) avisarUsuario();
 };
 ```
 
@@ -214,9 +224,13 @@ Os erros da biblioteca são `SipError` com um `code` estável (`register-rejecte
 ## Reconexão
 
 ```ts
-client.on('reconnecting', (attempt, delayMs) => console.log(`tentativa ${attempt} em ${delayMs}ms`));
-client.on('reconnect-failed', attempts => console.log(`desistiu depois de ${attempts} tentativas`));
-client.on('unregistered', () => console.log('registro perdido'));
+client.on("reconnecting", (attempt, delayMs) =>
+    console.log(`tentativa ${attempt} em ${delayMs}ms`)
+);
+client.on("reconnect-failed", (attempts) =>
+    console.log(`desistiu depois de ${attempts} tentativas`)
+);
+client.on("unregistered", () => console.log("registro perdido"));
 ```
 
 - A primeira tentativa depois de uma queda sai em até 500 ms; as seguintes dobram a partir de `reconnectDelay` até `maxReconnectDelay`, com jitter.
@@ -231,8 +245,8 @@ client.on('unregistered', () => console.log('registro perdido'));
 Cada stack SIP é carregada sob demanda: quem usa `provider: 'sipjs'` não baixa o JsSIP, e vice-versa. As classes dos providers saíram do entry principal (que continua exportando os tipos):
 
 ```ts
-import { SipJSProvider, SipJSSession } from 'easy-sipjs/sipjs';
-import { JsSIPProvider, JsSIPSession } from 'easy-sipjs/jssip';
+import { SipJSProvider, SipJSSession } from "easy-sipjs/sipjs";
+import { JsSIPProvider, JsSIPSession } from "easy-sipjs/jssip";
 ```
 
 ---
@@ -258,15 +272,15 @@ session.unmute();
 await session.hold();
 await session.unhold();
 
-await session.sendDTMF('1', { mode: 'sip-info', durationMs: 160 });
-await session.sendDTMF('2', { mode: 'rtp-event' });
-await session.sendDTMF('#', { mode: 'auto' });
+await session.sendDTMF("1", { mode: "sip-info", durationMs: 160 });
+await session.sendDTMF("2", { mode: "rtp-event" });
+await session.sendDTMF("#", { mode: "auto" });
 
-await session.transfer('4003');
+await session.transfer("4003");
 await session.transfer(outraSession);
 
-await session.setAudioInput('device-id');
-await session.setAudioOutput('speaker-id');
+await session.setAudioInput("device-id");
+await session.setAudioOutput("speaker-id");
 session.setRemoteVolume(0.6); // 0–1: volume do elemento; acima de 1 amplifica
 
 await session.shareScreen();
@@ -278,18 +292,18 @@ await session.stopScreenSharing();
 ## Presença / BLF
 
 ```ts
-client.onPresence(event => {
-  console.log(event.extension, event.status);
+client.onPresence((event) => {
+    console.log(event.extension, event.status);
 });
 
-await client.subscribePresence('4002');
-await client.subscribePresence('4003', { event: 'dialog' });
+await client.subscribePresence("4002");
+await client.subscribePresence("4003", { event: "dialog" });
 ```
 
 Status normalizados:
 
 ```ts
-'available' | 'busy' | 'ringing' | 'offline' | 'unknown'
+"available" | "busy" | "ringing" | "offline" | "unknown";
 ```
 
 ---
@@ -298,7 +312,7 @@ Status normalizados:
 
 ```ts
 await client.register();
-await client.call({ destination: '4002' });
+await client.call({ destination: "4002" });
 await client.answer(invitation, {});
 await client.unregister();
 ```

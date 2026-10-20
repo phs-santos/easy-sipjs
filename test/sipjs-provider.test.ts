@@ -9,13 +9,17 @@ function createFakeSession(peerConnection?: unknown) {
         stateChange: { addListener: vi.fn() },
         delegate: undefined,
         remoteIdentity: { uri: { host: "example.com" } },
-        sessionDescriptionHandler: peerConnection ? { peerConnection } : undefined,
+        sessionDescriptionHandler: peerConnection
+            ? { peerConnection }
+            : undefined,
         refer: vi.fn().mockResolvedValue(undefined),
         // sip.js resolves invite() when the re-INVITE is sent; the peer's answer arrives through requestDelegate.
-        invite: vi.fn((options?: { requestDelegate?: { onAccept?: () => void } }) => {
-            options?.requestDelegate?.onAccept?.();
-            return Promise.resolve();
-        }),
+        invite: vi.fn(
+            (options?: { requestDelegate?: { onAccept?: () => void } }) => {
+                options?.requestDelegate?.onAccept?.();
+                return Promise.resolve();
+            }
+        ),
     } as any;
 }
 
@@ -33,7 +37,12 @@ describe("SipJSSession.getLocalStream", () => {
 
     it("returns a MediaStream with the local audio track", () => {
         const audioTrack = { kind: "audio" };
-        const pc = { getSenders: () => [{ track: audioTrack }, { track: { kind: "video" } }] };
+        const pc = {
+            getSenders: () => [
+                { track: audioTrack },
+                { track: { kind: "video" } },
+            ],
+        };
         const session = new SipJSSession(createFakeSession(pc));
 
         const stream = session.getLocalStream();
@@ -55,7 +64,11 @@ describe("SipJSSession.isOnHold (remote hold inferred from re-INVITE SDP directi
         session.on("hold", hold);
 
         const onInvite = session.getRawSession().delegate!.onInvite!;
-        onInvite({ body: "v=0\r\nm=audio 1 RTP/AVP 0\r\na=sendonly\r\n" } as any, "", 200);
+        onInvite(
+            { body: "v=0\r\nm=audio 1 RTP/AVP 0\r\na=sendonly\r\n" } as any,
+            "",
+            200
+        );
 
         expect(session.isOnHold()).toEqual({ local: false, remote: true });
         expect(hold).toHaveBeenCalledWith({ originator: "remote" });
@@ -90,7 +103,10 @@ describe("SipJSSession.isOnHold (remote hold inferred from re-INVITE SDP directi
 });
 
 describe("SipJSSession.transfer (progress via REFER's implicit-subscription NOTIFYs)", () => {
-    function fakeNotification(statusLine: string, subscriptionState = "active") {
+    function fakeNotification(
+        statusLine: string,
+        subscriptionState = "active"
+    ) {
         return {
             accept: vi.fn().mockResolvedValue(undefined),
             request: {
@@ -107,12 +123,18 @@ describe("SipJSSession.transfer (progress via REFER's implicit-subscription NOTI
         session.on("transfer-progress", progress);
 
         await session.transfer("1000");
-        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (n: unknown) => void;
+        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (
+            n: unknown
+        ) => void;
         const notification = fakeNotification("SIP/2.0 100 Trying", "active");
         onNotify(notification);
 
         expect(notification.accept).toHaveBeenCalled();
-        expect(progress).toHaveBeenCalledWith({ statusCode: 100, reasonPhrase: "Trying", final: false });
+        expect(progress).toHaveBeenCalledWith({
+            statusCode: 100,
+            reasonPhrase: "Trying",
+            final: false,
+        });
     });
 
     it("marks the transfer final on a 200 OK sipfrag", async () => {
@@ -122,10 +144,18 @@ describe("SipJSSession.transfer (progress via REFER's implicit-subscription NOTI
         session.on("transfer-progress", progress);
 
         await session.transfer("1000");
-        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (n: unknown) => void;
-        onNotify(fakeNotification("SIP/2.0 200 OK", "terminated;reason=noresource"));
+        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (
+            n: unknown
+        ) => void;
+        onNotify(
+            fakeNotification("SIP/2.0 200 OK", "terminated;reason=noresource")
+        );
 
-        expect(progress).toHaveBeenCalledWith({ statusCode: 200, reasonPhrase: "OK", final: true });
+        expect(progress).toHaveBeenCalledWith({
+            statusCode: 200,
+            reasonPhrase: "OK",
+            final: true,
+        });
     });
 
     it("marks the transfer final when the subscription terminates even without a clean 2xx", async () => {
@@ -135,10 +165,18 @@ describe("SipJSSession.transfer (progress via REFER's implicit-subscription NOTI
         session.on("transfer-progress", progress);
 
         await session.transfer("1000");
-        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (n: unknown) => void;
-        onNotify(fakeNotification("SIP/2.0 487 Request Terminated", "terminated"));
+        const onNotify = rawSession.refer.mock.calls[0][1].onNotify as (
+            n: unknown
+        ) => void;
+        onNotify(
+            fakeNotification("SIP/2.0 487 Request Terminated", "terminated")
+        );
 
-        expect(progress).toHaveBeenCalledWith({ statusCode: 487, reasonPhrase: "Request Terminated", final: true });
+        expect(progress).toHaveBeenCalledWith({
+            statusCode: 487,
+            reasonPhrase: "Request Terminated",
+            final: true,
+        });
     });
 });
 
@@ -160,9 +198,13 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
 
         await session.upgradeToVideo();
 
-        expect(rawSession.invite).toHaveBeenCalledWith(expect.objectContaining({
-            sessionDescriptionHandlerOptions: { constraints: { audio: true, video: true } },
-        }));
+        expect(rawSession.invite).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionDescriptionHandlerOptions: {
+                    constraints: { audio: true, video: true },
+                },
+            })
+        );
     });
 
     it("downgradeToAudio() is a no-op if there is no active video sender", async () => {
@@ -186,9 +228,13 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
 
         expect(videoTrack.stop).toHaveBeenCalled();
         expect(replaceTrack).toHaveBeenCalledWith(null);
-        expect(rawSession.invite).toHaveBeenCalledWith(expect.objectContaining({
-            sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
-        }));
+        expect(rawSession.invite).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sessionDescriptionHandlerOptions: {
+                    constraints: { audio: true, video: false },
+                },
+            })
+        );
     });
 });
 
@@ -196,10 +242,12 @@ describe("SipJSSession.hold / unhold (wait for the peer's answer to the re-INVIT
     it("only reports the hold once the re-INVITE is accepted", async () => {
         const rawSession = createFakeSession();
         let accept: (() => void) | undefined;
-        rawSession.invite = vi.fn((options: { requestDelegate: { onAccept: () => void } }) => {
-            accept = options.requestDelegate.onAccept;
-            return Promise.resolve();
-        });
+        rawSession.invite = vi.fn(
+            (options: { requestDelegate: { onAccept: () => void } }) => {
+                accept = options.requestDelegate.onAccept;
+                return Promise.resolve();
+            }
+        );
         const session = new SipJSSession(rawSession);
         const hold = vi.fn();
         session.on("hold", hold);
@@ -217,10 +265,16 @@ describe("SipJSSession.hold / unhold (wait for the peer's answer to the re-INVIT
 
     it("rejects and stays off hold when the peer refuses the re-INVITE", async () => {
         const rawSession = createFakeSession();
-        rawSession.invite = vi.fn((options: { requestDelegate: { onReject: (r: unknown) => void } }) => {
-            options.requestDelegate.onReject({ message: { statusCode: 488 } });
-            return Promise.resolve();
-        });
+        rawSession.invite = vi.fn(
+            (options: {
+                requestDelegate: { onReject: (r: unknown) => void };
+            }) => {
+                options.requestDelegate.onReject({
+                    message: { statusCode: 488 },
+                });
+                return Promise.resolve();
+            }
+        );
         const session = new SipJSSession(rawSession);
 
         await expect(session.hold()).rejects.toThrow(/488/);
@@ -254,20 +308,33 @@ describe("SipJSSession failure ordering", () => {
         session.on("terminated", terminated);
 
         session.emitFailed({ statusCode: 486, reasonPhrase: "Busy Here" });
-        const onStateChange = rawSession.stateChange.addListener.mock.calls[0][0] as (state: SessionState) => void;
+        const onStateChange = rawSession.stateChange.addListener.mock
+            .calls[0][0] as (state: SessionState) => void;
         onStateChange(SessionState.Terminated);
 
-        expect(terminated).toHaveBeenCalledWith({ statusCode: 486, reasonPhrase: "Busy Here" });
+        expect(terminated).toHaveBeenCalledWith({
+            statusCode: 486,
+            reasonPhrase: "Busy Here",
+        });
     });
 });
 
 describe("SipJSSession hold strategies", () => {
-    async function holdModifiers(holdStrategy?: "asterisk-inactive" | "asterisk-sendonly") {
+    async function holdModifiers(
+        holdStrategy?: "asterisk-inactive" | "asterisk-sendonly"
+    ) {
         const rawSession = createFakeSession();
         const session = new SipJSSession(rawSession, { holdStrategy });
         await session.hold();
-        const [modifier] = rawSession.invite.mock.calls[0][0].sessionDescriptionHandlerModifiers;
-        return (await modifier({ type: "offer", sdp: "m=audio 1 RTP/AVP 0\r\na=sendrecv\r\n" })).sdp as string;
+        const [modifier] =
+            rawSession.invite.mock.calls[0][0]
+                .sessionDescriptionHandlerModifiers;
+        return (
+            await modifier({
+                type: "offer",
+                sdp: "m=audio 1 RTP/AVP 0\r\na=sendrecv\r\n",
+            })
+        ).sdp as string;
     }
 
     it("holds with a=inactive by default (Asterisk-friendly)", async () => {
@@ -275,27 +342,42 @@ describe("SipJSSession hold strategies", () => {
     });
 
     it("holds with a=sendonly for 'asterisk-sendonly'", async () => {
-        expect(await holdModifiers("asterisk-sendonly")).toContain("a=sendonly");
+        expect(await holdModifiers("asterisk-sendonly")).toContain(
+            "a=sendonly"
+        );
     });
 
     it("uses sip.js's own hold flag for 'sipjs-default', and clears it on unhold", async () => {
         const rawSession = createFakeSession();
-        rawSession.sessionDescriptionHandlerOptionsReInvite = { constraints: { audio: true } };
-        const session = new SipJSSession(rawSession, { holdStrategy: "sipjs-default" });
+        rawSession.sessionDescriptionHandlerOptionsReInvite = {
+            constraints: { audio: true },
+        };
+        const session = new SipJSSession(rawSession, {
+            holdStrategy: "sipjs-default",
+        });
 
         await session.hold();
         await session.unhold();
 
-        const [holdCall, unholdCall] = rawSession.invite.mock.calls.map(([options]: [any]) => options.sessionDescriptionHandlerOptions);
+        const [holdCall, unholdCall] = rawSession.invite.mock.calls.map(
+            ([options]: [any]) => options.sessionDescriptionHandlerOptions
+        );
         expect(holdCall).toEqual({ constraints: { audio: true }, hold: true });
-        expect(unholdCall).toEqual({ constraints: { audio: true }, hold: false });
+        expect(unholdCall).toEqual({
+            constraints: { audio: true },
+            hold: false,
+        });
     });
 });
 
 describe("SipJSSession DTMF default mode", () => {
     it("uses the session's configured mode when sendDTMF() doesn't name one", async () => {
         const insertDTMF = vi.fn();
-        const pc = { getSenders: () => [{ track: { kind: "audio" }, dtmf: { insertDTMF } }] };
+        const pc = {
+            getSenders: () => [
+                { track: { kind: "audio" }, dtmf: { insertDTMF } },
+            ],
+        };
         const rawSession = createFakeSession(pc);
         rawSession.info = vi.fn().mockResolvedValue(undefined);
         const session = new SipJSSession(rawSession, { dtmfMode: "rtp-event" });
@@ -314,13 +396,17 @@ describe("SipJSSession media recovery", () => {
             iceConnectionState: "connected",
             connectionState: "connected",
             getSenders: () => [],
-            addEventListener: (event: string, listener: () => void) => listeners.set(event, listener),
+            addEventListener: (event: string, listener: () => void) =>
+                listeners.set(event, listener),
         };
         const rawSession = createFakeSession(pc);
-        rawSession.sessionDescriptionHandlerOptionsReInvite = { constraints: { audio: true } };
+        rawSession.sessionDescriptionHandlerOptionsReInvite = {
+            constraints: { audio: true },
+        };
         const session = new SipJSSession(rawSession, settings);
         // The recovery listeners are bound when the call is established.
-        const onStateChange = rawSession.stateChange.addListener.mock.calls[0][0] as (state: SessionState) => void;
+        const onStateChange = rawSession.stateChange.addListener.mock
+            .calls[0][0] as (state: SessionState) => void;
         onStateChange(SessionState.Established);
         const setIceState = (state: string) => {
             pc.iceConnectionState = state;
@@ -332,18 +418,27 @@ describe("SipJSSession media recovery", () => {
     it("restarts ICE after a short grace period on 'disconnected', without waiting for 'failed'", async () => {
         vi.useFakeTimers();
         try {
-            const { rawSession, setIceState } = createRecoverableSession({ mediaRecovery: { disconnectedGraceMs: 3000 } });
+            const { rawSession, setIceState } = createRecoverableSession({
+                mediaRecovery: { disconnectedGraceMs: 3000 },
+            });
 
             setIceState("disconnected");
             await vi.advanceTimersByTimeAsync(2999);
             expect(rawSession.invite).not.toHaveBeenCalled();
 
             await vi.advanceTimersByTimeAsync(1);
-            expect(rawSession.invite).toHaveBeenCalledWith(expect.objectContaining({
-                sessionDescriptionHandlerOptions: { constraints: { audio: true }, offerOptions: { iceRestart: true } },
-            }));
+            expect(rawSession.invite).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sessionDescriptionHandlerOptions: {
+                        constraints: { audio: true },
+                        offerOptions: { iceRestart: true },
+                    },
+                })
+            );
             // The ICE-restart flag must not leak into later re-INVITEs (hold, video...).
-            expect(rawSession.sessionDescriptionHandlerOptionsReInvite).toEqual({ constraints: { audio: true } });
+            expect(rawSession.sessionDescriptionHandlerOptionsReInvite).toEqual(
+                { constraints: { audio: true } }
+            );
         } finally {
             vi.useRealTimers();
         }
@@ -366,7 +461,9 @@ describe("SipJSSession media recovery", () => {
     });
 
     it("only reports the failure when recovery is disabled", async () => {
-        const { rawSession, session, setIceState } = createRecoverableSession({ mediaRecovery: { enabled: false } });
+        const { rawSession, session, setIceState } = createRecoverableSession({
+            mediaRecovery: { enabled: false },
+        });
         const failed = vi.fn();
         session.on("media-failed", failed);
 
@@ -393,12 +490,17 @@ describe("SipJSSession in-dialog MESSAGE", () => {
         const received = vi.fn();
         session.on("message", received);
         const accept = vi.fn().mockResolvedValue(undefined);
-        const message = { accept, request: { body: "oi", getHeader: () => "text/plain" } };
+        const message = {
+            accept,
+            request: { body: "oi", getHeader: () => "text/plain" },
+        };
 
         rawSession.delegate.onMessage(message);
         await message.accept();
 
         expect(accept).toHaveBeenCalledTimes(1);
-        expect(received).toHaveBeenCalledWith(expect.objectContaining({ body: "oi", contentType: "text/plain" }));
+        expect(received).toHaveBeenCalledWith(
+            expect.objectContaining({ body: "oi", contentType: "text/plain" })
+        );
     });
 });

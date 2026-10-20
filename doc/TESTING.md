@@ -20,13 +20,13 @@ npx vitest run test/jssip-provider.test.ts -t 'JsSIPSession resource cleanup'
 
 ## Matriz de cenários
 
-| ID | Passos para reproduzir no código anterior | Resultado incorreto a procurar | Critério de correção | Automação |
-| --- | --- | --- | --- | --- |
-| FIX-001 | JsSIP: criar sessão, emitir `icecandidate`, encerrar antes de `iceGatheringTimeoutMs`, avançar relógio | `ready()` depois de encerrada | Nenhuma chamada tardia a `ready()` | Adicionada, execução pendente |
-| FIX-002 | Registrar `peerconnection` e listeners, terminar sessão, verificar handlers ativos | Listeners persistem | `removeEventListener` com mesmos handlers | JsSIP adicionada; SIP.js pendente |
-| FIX-003 | JsSIP: iniciar screen sharing, encerrar chamada sem stop manual | Indicador de captura permanece ativo | Track de tela parada e referências limpas | Manual; unitário pendente |
-| FIX-004 | SIP.js: simular falha ICE, iniciar recuperação, terminar sessão antes de callback | Renegociação/ação sobre sessão terminada | Nenhuma ação tardia | Pendente |
-| FIX-005 | Deixar operação em fila, agendar reconnect, chamar `unregister()` | Reconnect continua após pedido de saída | Retry cancelado imediatamente; estado final desconectado | Pendente |
+| ID      | Passos para reproduzir no código anterior                                                              | Resultado incorreto a procurar           | Critério de correção                                     | Automação                         |
+| ------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------- | -------------------------------------------------------- | --------------------------------- |
+| FIX-001 | JsSIP: criar sessão, emitir `icecandidate`, encerrar antes de `iceGatheringTimeoutMs`, avançar relógio | `ready()` depois de encerrada            | Nenhuma chamada tardia a `ready()`                       | Adicionada, execução pendente     |
+| FIX-002 | Registrar `peerconnection` e listeners, terminar sessão, verificar handlers ativos                     | Listeners persistem                      | `removeEventListener` com mesmos handlers                | JsSIP adicionada; SIP.js pendente |
+| FIX-003 | JsSIP: iniciar screen sharing, encerrar chamada sem stop manual                                        | Indicador de captura permanece ativo     | Track de tela parada e referências limpas                | Manual; unitário pendente         |
+| FIX-004 | SIP.js: simular falha ICE, iniciar recuperação, terminar sessão antes de callback                      | Renegociação/ação sobre sessão terminada | Nenhuma ação tardia                                      | Pendente                          |
+| FIX-005 | Deixar operação em fila, agendar reconnect, chamar `unregister()`                                      | Reconnect continua após pedido de saída  | Retry cancelado imediatamente; estado final desconectado | Pendente                          |
 
 ## Validação manual com PBX de teste
 

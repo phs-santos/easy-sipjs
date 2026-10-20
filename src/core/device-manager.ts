@@ -6,11 +6,13 @@ export class DeviceManager {
     private listeners = new Set<DeviceListener>();
     private cleanupDeviceChange?: () => void;
 
-    async requestPermissions(options: MediaStreamConstraints = { audio: true, video: false }): Promise<boolean> {
+    async requestPermissions(
+        options: MediaStreamConstraints = { audio: true, video: false }
+    ): Promise<boolean> {
         if (!navigator?.mediaDevices?.getUserMedia) return false;
         try {
             const stream = await navigator.mediaDevices.getUserMedia(options);
-            stream.getTracks().forEach(track => track.stop());
+            stream.getTracks().forEach((track) => track.stop());
             await this.emitChange();
             return true;
         } catch {
@@ -22,8 +24,12 @@ export class DeviceManager {
         if (!navigator?.mediaDevices?.enumerateDevices) return [];
         const devices = await navigator.mediaDevices.enumerateDevices();
         return devices
-            .filter(device => ["audioinput", "audiooutput", "videoinput"].includes(device.kind))
-            .map(device => ({
+            .filter((device) =>
+                ["audioinput", "audiooutput", "videoinput"].includes(
+                    device.kind
+                )
+            )
+            .map((device) => ({
                 id: device.deviceId,
                 label: device.label || labelFor(device),
                 kind: toKind(device.kind),
@@ -33,22 +39,28 @@ export class DeviceManager {
     }
 
     async microphones(): Promise<SoftphoneDevice[]> {
-        return (await this.list()).filter(device => device.kind === "microphone");
+        return (await this.list()).filter(
+            (device) => device.kind === "microphone"
+        );
     }
 
     async speakers(): Promise<SoftphoneDevice[]> {
-        return (await this.list()).filter(device => device.kind === "speaker");
+        return (await this.list()).filter(
+            (device) => device.kind === "speaker"
+        );
     }
 
     async cameras(): Promise<SoftphoneDevice[]> {
-        return (await this.list()).filter(device => device.kind === "camera");
+        return (await this.list()).filter((device) => device.kind === "camera");
     }
 
     watch(): () => void {
         if (this.cleanupDeviceChange) return this.cleanupDeviceChange;
         if (!navigator?.mediaDevices?.addEventListener) return () => undefined;
 
-        const handler = () => { void this.emitChange(); };
+        const handler = () => {
+            void this.emitChange();
+        };
         navigator.mediaDevices.addEventListener("devicechange", handler);
         this.cleanupDeviceChange = () => {
             navigator.mediaDevices.removeEventListener("devicechange", handler);
@@ -65,7 +77,13 @@ export class DeviceManager {
     private async emitChange(): Promise<void> {
         const devices = await this.list();
         for (const listener of [...this.listeners]) {
-            try { listener(devices); } catch (error) { queueMicrotask(() => { throw error; }); }
+            try {
+                listener(devices);
+            } catch (error) {
+                queueMicrotask(() => {
+                    throw error;
+                });
+            }
         }
     }
 }

@@ -4,26 +4,26 @@
 
 ## Comandos
 
-| Comando | Resultado |
-| --- | --- |
-| `npm run lint` | PASSOU |
-| `npm run typecheck` | PASSOU |
-| `npm test` | PASSOU — 93/93 (5 execuções seguidas) |
-| `npm run build` | PASSOU |
-| PBX Asterisk/Kamailio, navegador real | NÃO EXECUTADOS |
+| Comando                               | Resultado                             |
+| ------------------------------------- | ------------------------------------- |
+| `npm run lint`                        | PASSOU                                |
+| `npm run typecheck`                   | PASSOU                                |
+| `npm test`                            | PASSOU — 93/93 (5 execuções seguidas) |
+| `npm run build`                       | PASSOU                                |
+| PBX Asterisk/Kamailio, navegador real | NÃO EXECUTADOS                        |
 
 ## Antes/depois
 
-| Caso | Teste | Antes (`12c6562`) | Depois | Conclusão |
-| --- | --- | --- | --- | --- |
-| 1 — callbacks após disconnect | `client.test.ts` › ignores late transport and REGISTER callbacks | FALHA | PASSA | Corrigido |
-| 2 — callbacks do registro antigo | `client.test.ts` › ignores callbacks from a replaced registration | FALHA | PASSA | Corrigido |
-| 3 — ping atrasado após disconnect | `sprint2-regression.test.ts` › ping que falha depois do disconnect | PASSA | PASSA | Não reproduzido (já protegido) |
-| 3 — ping atrasado após novo connect | `sprint2-regression.test.ts` › ping da conexão anterior | FALHA | PASSA | **A correção original não cobria**; completada nesta validação |
-| 4 — reconnect lento + disconnect | `sprint2-regression.test.ts` › caso 4 | FALHA | PASSA | Corrigido |
-| INVITE pelo registro antigo | `sprint2-regression.test.ts` › convites atrasados | FALHA | PASSA | Corrigido |
-| `updateCredentials()` após disconnect | `sprint2-regression.test.ts` › efeitos colaterais | PASSA | PASSA | **A correção original quebrava** (não registrava, sem erro); corrigido nesta validação |
-| `connect()` / `reconnect()` após disconnect | `sprint2-regression.test.ts` › efeitos colaterais | PASSA | PASSA | Sem regressão |
+| Caso                                        | Teste                                                              | Antes (`12c6562`) | Depois | Conclusão                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------ | ----------------- | ------ | -------------------------------------------------------------------------------------- |
+| 1 — callbacks após disconnect               | `client.test.ts` › ignores late transport and REGISTER callbacks   | FALHA             | PASSA  | Corrigido                                                                              |
+| 2 — callbacks do registro antigo            | `client.test.ts` › ignores callbacks from a replaced registration  | FALHA             | PASSA  | Corrigido                                                                              |
+| 3 — ping atrasado após disconnect           | `sprint2-regression.test.ts` › ping que falha depois do disconnect | PASSA             | PASSA  | Não reproduzido (já protegido)                                                         |
+| 3 — ping atrasado após novo connect         | `sprint2-regression.test.ts` › ping da conexão anterior            | FALHA             | PASSA  | **A correção original não cobria**; completada nesta validação                         |
+| 4 — reconnect lento + disconnect            | `sprint2-regression.test.ts` › caso 4                              | FALHA             | PASSA  | Corrigido                                                                              |
+| INVITE pelo registro antigo                 | `sprint2-regression.test.ts` › convites atrasados                  | FALHA             | PASSA  | Corrigido                                                                              |
+| `updateCredentials()` após disconnect       | `sprint2-regression.test.ts` › efeitos colaterais                  | PASSA             | PASSA  | **A correção original quebrava** (não registrava, sem erro); corrigido nesta validação |
+| `connect()` / `reconnect()` após disconnect | `sprint2-regression.test.ts` › efeitos colaterais                  | PASSA             | PASSA  | Sem regressão                                                                          |
 
 ## Ajustes feitos durante a validação (`src/index.ts`)
 

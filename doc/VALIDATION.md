@@ -4,26 +4,26 @@
 
 ## Comandos
 
-| Comando | Resultado |
-| --- | --- |
-| `npm run lint` | PASSOU |
-| `npm run typecheck` | PASSOU |
-| `npm test` | PASSOU — 93/93 (5 execuções seguidas, sem instabilidade) |
-| `npm run build` | PASSOU |
-| Integração PBX / navegador real | NÃO EXECUTADA |
+| Comando                         | Resultado                                                |
+| ------------------------------- | -------------------------------------------------------- |
+| `npm run lint`                  | PASSOU                                                   |
+| `npm run typecheck`             | PASSOU                                                   |
+| `npm test`                      | PASSOU — 93/93 (5 execuções seguidas, sem instabilidade) |
+| `npm run build`                 | PASSOU                                                   |
+| Integração PBX / navegador real | NÃO EXECUTADA                                            |
 
 ## Antes/depois
 
 Os mesmos testes foram executados contra o código anterior à correção (`aa8d6d2`) e contra a correção.
 
-| ID | Teste | Antes (`aa8d6d2`) | Depois | Conclusão |
-| --- | --- | --- | --- | --- |
-| FIX-001 | `jssip-provider.test.ts` › cancels pending ICE ready callbacks | FALHA | PASSA | Defeito reproduzido e corrigido |
-| FIX-002 JsSIP | `jssip-provider.test.ts` › removes peer connection listeners | FALHA | PASSA | Defeito reproduzido e corrigido |
-| FIX-002 SIP.js | `sprint1-regression.test.ts` › FIX-002 (2 testes) | FALHA | PASSA | Defeito reproduzido e corrigido |
-| FIX-003 | `sprint1-regression.test.ts` › FIX-003 (2 testes) | FALHA | PASSA | Defeito reproduzido e corrigido |
-| FIX-004 | `sprint1-regression.test.ts` › FIX-004 (2 testes) | PASSA | PASSA | **Não reproduzido**: o código anterior já ignorava a recuperação depois do encerramento. A mudança é defensiva. |
-| FIX-005 | `sprint1-regression.test.ts` › FIX-005 | PASSA | PASSA | **Não reproduzido**: a reconexão enfileirada atrás do `unregister()` já era descartada. A mudança é defensiva. |
+| ID             | Teste                                                          | Antes (`aa8d6d2`) | Depois | Conclusão                                                                                                       |
+| -------------- | -------------------------------------------------------------- | ----------------- | ------ | --------------------------------------------------------------------------------------------------------------- |
+| FIX-001        | `jssip-provider.test.ts` › cancels pending ICE ready callbacks | FALHA             | PASSA  | Defeito reproduzido e corrigido                                                                                 |
+| FIX-002 JsSIP  | `jssip-provider.test.ts` › removes peer connection listeners   | FALHA             | PASSA  | Defeito reproduzido e corrigido                                                                                 |
+| FIX-002 SIP.js | `sprint1-regression.test.ts` › FIX-002 (2 testes)              | FALHA             | PASSA  | Defeito reproduzido e corrigido                                                                                 |
+| FIX-003        | `sprint1-regression.test.ts` › FIX-003 (2 testes)              | FALHA             | PASSA  | Defeito reproduzido e corrigido                                                                                 |
+| FIX-004        | `sprint1-regression.test.ts` › FIX-004 (2 testes)              | PASSA             | PASSA  | **Não reproduzido**: o código anterior já ignorava a recuperação depois do encerramento. A mudança é defensiva. |
+| FIX-005        | `sprint1-regression.test.ts` › FIX-005                         | PASSA             | PASSA  | **Não reproduzido**: a reconexão enfileirada atrás do `unregister()` já era descartada. A mudança é defensiva.  |
 
 ## Pendências
 
