@@ -107,6 +107,8 @@ export class SipClient {
     private synthesizers = { ringtone: new SipAudioSynthesizer(), ringback: new SipAudioSynthesizer() };
 
     private operationLock: Promise<void> = Promise.resolve();
+    /** Invalidates callbacks from older provider registrations and health checks. */
+    private lifecycleGeneration = 0;
     private presenceSubscriptions = new Map<string, PresenceSubscribeOptions | undefined>();
     private healthTimer?: ReturnType<typeof setInterval>;
 
@@ -319,13 +321,17 @@ export class SipClient {
     // ─── Register / connect ──────────────────────────────────────────────────
 
     async register(): Promise<SipRegisterResult> {
-        return this.enqueue(() => this.doRegister());
+        return this.enqueue(() => {
+            this.intentionalDisconnect = false;
+            return this.doRegister();
+        });
     }
 
     private async doRegister(): Promise<SipRegisterResult> {
         const provider = await this.getProvider();
         this.setupNetworkMonitoring();
-        this.intentionalDisconnect = false;
+        if (this.intentionalDisconnect) return this.getRegisterResult();
+        const generation = ++this.lifecycleGeneration;
         this.started = true;
         this.startHealthTimer();
 
@@ -345,12 +351,14 @@ export class SipClient {
 
         const internalUserAgentDelegate: ISipUserAgentDelegate = {
             onConnect: (data) => {
+                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
                 this.setConnectionState('connected');
                 this.reconnectAttempt = 0;
                 this.onUserAgent.onConnect?.(data);
                 this.emitter.emit('connect');
             },
             onDisconnect: (error) => {
+                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
                 this.setConnectionState('disconnected');
                 this.onUserAgent.onDisconnect?.(error);
                 this.emitter.emit('disconnect', error);
@@ -361,6 +369,7 @@ export class SipClient {
                 }
             },
             onInvite: (invitation) => {
+                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) { invitation.reject().catch(() => undefined); return; }
                 this.playRingtone();
 
                 const originalAccept = invitation.accept.bind(invitation);
@@ -408,8 +417,9 @@ export class SipClient {
         };
 
         const internalRegisterDelegate: ISipRegisterDelegate = {
-            onAccept: (data) => this.handleRegistered(data),
+            onAccept: (data) => { if (generation === this.lifecycleGeneration && !this.intentionalDisconnect) this.handleRegistered(data); },
             onReject: (error) => {
+                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
                 this.setConnectionState('error');
                 this.onRegister.onReject?.(error);
                 this.emitter.emit('register-failed', error);
@@ -417,7 +427,7 @@ export class SipClient {
             onTrying: () => this.onRegister.onTrying?.(),
             onRedirect: (data) => this.onRegister.onRedirect?.(data),
             onUnregistered: () => {
-                if (this.intentionalDisconnect) return;
+                if (generation !== this.lifecycleGeneration || this.intentionalDisconnect) return;
                 if (this.connectionState === 'registered') this.setConnectionState('connected');
                 this.onRegister.onUnregistered?.();
                 this.emitter.emit('unregistered');
@@ -489,6 +499,8 @@ export class SipClient {
             try { await (await this.getProvider()).unregister(); } catch (_) { }
             this.credentials = credentials;
             this.connectionState = 'disconnected';
+            // Like register(): an explicit request to come back online, even after disconnect().
+            this.intentionalDisconnect = false;
             return this.doRegister();
         });
     }
@@ -533,6 +545,8 @@ export class SipClient {
         const force = this.forceNextReconnect;
         this.forceNextReconnect = false;
         const provider = await this.getProvider();
+        if (this.intentionalDisconnect) return;
+        const generation = this.lifecycleGeneration;
         this.reconnecting = true;
 
         try {
@@ -545,6 +559,7 @@ export class SipClient {
             // Resolves only once registered again. Providers that report it through the
             // register delegate have already moved the state by now.
             await provider.reconnect({ force });
+            if (this.intentionalDisconnect || generation !== this.lifecycleGeneration) return;
             if (this.connectionState !== 'registered') this.handleRegistered();
             // The signaling path is back; calls that lost their media path while it was
             // down (e.g. the device changed networks) can renegotiate now.
@@ -553,7 +568,7 @@ export class SipClient {
             }
         } catch (error) {
             const websocketUp = provider.getHealth?.().websocketConnected ?? false;
-            this.setConnectionState(websocketUp ? 'connected' : 'disconnected');
+            if (!this.intentionalDisconnect && generation === this.lifecycleGeneration) this.setConnectionState(websocketUp ? 'connected' : 'disconnected');
             throw error;
         } finally {
             this.reconnecting = false;
@@ -575,8 +590,11 @@ export class SipClient {
 
         const online = this.connectionState === 'connected' || this.connectionState === 'registered';
         if (provider.ping && online && !this.reconnecting) {
+            // A ping that outlives its registration must not count against the next one.
+            const generation = this.lifecycleGeneration;
             pingResult = await provider.ping();
-            this.handlePingResult(pingResult.ok);
+            const stillOnline = this.connectionState === 'connected' || this.connectionState === 'registered';
+            if (this.started && !this.intentionalDisconnect && stillOnline && generation === this.lifecycleGeneration) this.handlePingResult(pingResult.ok);
         }
 
         const status: SipHealthStatus = {
@@ -896,6 +914,7 @@ export class SipClient {
     async unregister(): Promise<void> {
         // Signal intent immediately: a queued unregister must cancel pending retries.
         this.intentionalDisconnect = true;
+        this.lifecycleGeneration++;
         this.started = false;
         this.clearTimers();
         return this.enqueue(() => this.doUnregister());

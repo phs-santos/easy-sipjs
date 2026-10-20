@@ -229,3 +229,30 @@ describe("SipClient log codes and media recovery", () => {
         expect(recoverMedia).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('SipClient lifecycle regression', () => {
+    it('ignores late transport and REGISTER callbacks after manual disconnect', async () => {
+        const { provider, delegates } = createFakeProvider();
+        const client = new SipClient(credentials, { customProvider: provider });
+        await client.connect();
+        await client.disconnect();
+        delegates.userAgent!.onConnect?.();
+        delegates.register!.onAccept?.();
+        delegates.register!.onReject?.(new Error('late rejection'));
+        expect(client.getConnectionState()).toBe('disconnected');
+    });
+
+    it('ignores callbacks from a replaced registration', async () => {
+        const { provider, delegates } = createFakeProvider();
+        const client = new SipClient(credentials, { customProvider: provider });
+        await client.connect();
+        const oldAgent = delegates.userAgent!;
+        const oldRegister = delegates.register!;
+        await client.disconnect();
+        await client.connect();
+        oldAgent.onDisconnect?.(new Error('old socket'));
+        oldRegister.onReject?.(new Error('old REGISTER'));
+        expect(client.getConnectionState()).toBe('registered');
+        await client.disconnect();
+    });
+});

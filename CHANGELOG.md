@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Corrigido
+- Sessões liberam timers de ICE, listeners do RTCPeerConnection e a captura de tela ao terminar (JsSIP e SIP.js).
+- Callbacks de um registro encerrado ou substituído (conexão, REGISTER, INVITE, reconexão, ping) não alteram mais o estado do cliente.
+- `updateCredentials()` volta a registrar quando chamado depois de `disconnect()`.
+
 ### Alterado
 - `npm run release` publica no npm direto da máquina de quem roda (exige `npm login`), logo depois do push da tag. O workflow de publicação do GitHub Actions foi removido.
 
