@@ -120,6 +120,7 @@ export class SipJSSession implements ISipSession {
     private bus = new SessionEventBus();
     private stats = new CallStatsSampler();
     private recoveryBoundTo?: RTCPeerConnection;
+    private recoveryListenerCleanup?: () => void;
     private recoveryAttempts = 0;
     private recoveryTimer?: ReturnType<typeof setTimeout>;
     private recovering = false;
@@ -594,13 +595,15 @@ export class SipJSSession implements ISipSession {
     private bindPeerConnectionRecovery(): void {
         const pc = this.getPeerConnection();
         if (!pc || this.recoveryBoundTo === pc) return;
+        this.recoveryListenerCleanup?.();
         this.recoveryBoundTo = pc;
 
         const recovery = this.settings.mediaRecovery ?? {};
         const graceMs = recovery.disconnectedGraceMs ?? DEFAULT_DISCONNECTED_GRACE_MS;
 
-        pc.addEventListener('connectionstatechange', () => this.emitMediaState(pc));
-        pc.addEventListener('iceconnectionstatechange', () => {
+        const onConnectionChange = () => { if (!this.terminated) this.emitMediaState(pc); };
+        const onIceChange = () => {
+            if (this.terminated) return;
             this.emitMediaState(pc);
             if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
             this.recoveryTimer = undefined;
@@ -619,9 +622,18 @@ export class SipJSSession implements ISipSession {
             } else if (state === 'disconnected') {
                 // Browsers take 15–30s to go from `disconnected` to `failed`. Past a short
                 // grace period (blips recover by themselves) it's not worth the silence.
-                this.recoveryTimer = setTimeout(() => void this.attemptMediaRecovery(), graceMs);
+                this.recoveryTimer = setTimeout(() => {
+                    this.recoveryTimer = undefined;
+                    if (!this.terminated) void this.attemptMediaRecovery();
+                }, graceMs);
             }
-        });
+        };
+        pc.addEventListener('connectionstatechange', onConnectionChange);
+        pc.addEventListener('iceconnectionstatechange', onIceChange);
+        this.recoveryListenerCleanup = () => {
+            pc.removeEventListener('connectionstatechange', onConnectionChange);
+            pc.removeEventListener('iceconnectionstatechange', onIceChange);
+        };
     }
 
     async recoverMedia(): Promise<void> {
@@ -702,6 +714,9 @@ export class SipJSSession implements ISipSession {
     }
 
     private cleanupMedia(): void {
+        this.recoveryListenerCleanup?.();
+        this.recoveryListenerCleanup = undefined;
+        this.recoveryBoundTo = undefined;
         if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
         this.recoveryTimer = undefined;
         this.screenTrack?.stop();

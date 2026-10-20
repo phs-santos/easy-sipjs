@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Release interativo: commita o que estiver pendente, sobe a versão, cria a tag e faz o push.
-// A publicação no npm é feita pelo workflow .github/workflows/publish.yml quando a tag chega ao GitHub.
+// Release interativo: commita o que estiver pendente, sobe a versão, cria a tag, faz o push
+// e publica no npm a partir desta máquina (precisa de `npm login`; o npm pode pedir o código 2FA).
 //
 // Uso: npm run release            (executa)
 //      npm run release -- --dry-run  (só mostra o que faria)
@@ -102,6 +102,14 @@ async function main() {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     console.log(`\n${c.bold(pkg.name)} ${c.dim(`v${pkg.version}`)}${dryRun ? c.yellow('  [dry-run: nada será alterado]') : ''}\n`);
 
+    // 0. Login no npm (a publicação sai daqui, não do CI)
+    let npmUser;
+    try {
+        npmUser = read('npm whoami');
+    } catch {
+        abort('Você não está logado no npm. Rode "npm login" e tente de novo.');
+    }
+
     // 1. Branch e sincronia com o remoto
     const branch = read('git rev-parse --abbrev-ref HEAD');
     if (branch === 'HEAD') abort('Você está fora de uma branch (HEAD solto). Faça checkout da main primeiro.');
@@ -184,7 +192,8 @@ async function main() {
     if (commitMsg) console.log(`  commit      ${commitMsg}`);
     console.log(`  release     chore(release): ${version} + tag ${tag}`);
     console.log(`  changelog   ${changelogNote}`);
-    console.log(`  push        origin ${branch} + ${tag} → GitHub Actions publica no npm`);
+    console.log(`  push        origin ${branch} + ${tag}`);
+    console.log(`  npm         publica como ${npmUser}${isPre ? ' (tag beta)' : ''}`);
     console.log(`  gh release  ${makeGhRelease ? 'sim' : 'não'}`);
     console.log();
     if (!(await confirm('Confirmar?'))) abort('Cancelado.');
@@ -209,9 +218,21 @@ async function main() {
     run('git', ['commit', '-m', `chore(release): ${version}`]);
     run('git', ['tag', '-a', tag, '-m', tag]);
 
-    // 10. Push (a tag dispara o publish no CI)
+    // 10. Push
     console.log(`\n${c.bold('Enviando...')}`);
     run('git', ['push', '--atomic', 'origin', branch, tag]);
+
+    // 11. Publicação no npm. Lint, testes e build já rodaram no passo 7, então
+    // --ignore-scripts evita repetir o prepublishOnly.
+    console.log(`\n${c.bold('Publicando no npm...')}`);
+    const publishArgs = ['publish', '--access', 'public', '--ignore-scripts', ...(isPre ? ['--tag', 'beta'] : [])];
+    console.log(c.dim(`$ npm ${publishArgs.join(' ')}`));
+    if (!dryRun) {
+        const res = spawnSync('npm', publishArgs, { cwd: root, stdio: 'inherit' });
+        if (res.status !== 0) {
+            abort(`A tag ${tag} já foi enviada, mas a publicação no npm falhou.\n  Para tentar de novo: npm ${publishArgs.join(' ')}`);
+        }
+    }
 
     if (makeGhRelease) {
         const args = ['release', 'create', tag, 'dist/easy-sip.min.js', 'dist/easy-sip.min.js.map', '--generate-notes'];
@@ -220,9 +241,9 @@ async function main() {
     }
 
     const repo = pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, '');
-    console.log(`\n${c.green('✔')} ${tag} enviado${dryRun ? ' (dry-run)' : ''}.`);
-    console.log(`  Publish no npm: ${repo}/actions/workflows/publish.yml`);
-    console.log(`  Depois:         https://www.npmjs.com/package/${pkg.name}\n`);
+    console.log(`\n${c.green('✔')} ${tag} publicado${dryRun ? ' (dry-run)' : ''}.`);
+    console.log(`  GitHub: ${repo}/tree/${tag}`);
+    console.log(`  npm:    https://www.npmjs.com/package/${pkg.name}\n`);
     rl.close();
 }
 

@@ -358,3 +358,33 @@ describe("JsSIPSession.upgradeToVideo / downgradeToAudio", () => {
         expect(rawSession.renegotiate).toHaveBeenCalled();
     });
 });
+
+describe('JsSIPSession resource cleanup', () => {
+    it('cancels pending ICE ready callbacks when the session ends', async () => {
+        vi.useFakeTimers();
+        try {
+            const raw = createFakeSession();
+            const session = new JsSIPSession(raw, { iceGatheringTimeoutMs: 1000 });
+            const ready = vi.fn();
+            trigger(raw, 'icecandidate', { ready });
+            await session.bye();
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(ready).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('removes peer connection listeners when the session ends', async () => {
+        const raw = createFakeSession();
+        const session = new JsSIPSession(raw);
+        const addEventListener = vi.fn();
+        const removeEventListener = vi.fn();
+        trigger(raw, 'peerconnection', { peerconnection: { addEventListener, removeEventListener } });
+        await session.bye();
+        expect(removeEventListener).toHaveBeenCalledTimes(3);
+        for (const [name, handler] of addEventListener.mock.calls) {
+            expect(removeEventListener).toHaveBeenCalledWith(name, handler);
+        }
+    });
+});

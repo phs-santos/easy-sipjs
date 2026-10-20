@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Alterado
+- `npm run release` publica no npm direto da máquina de quem roda (exige `npm login`), logo depois do push da tag. O workflow de publicação do GitHub Actions foi removido.
+
 ## [3.1.1] - 2026-10-20
 
 ### Alterado

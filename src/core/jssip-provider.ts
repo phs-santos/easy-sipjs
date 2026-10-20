@@ -42,6 +42,8 @@ export class JsSIPSession implements ISipSession {
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
     private terminated = false;
+    private iceTimers = new Set<ReturnType<typeof setTimeout>>();
+    private peerConnectionCleanups = new Set<() => void>();
     private bus = new SessionEventBus();
     private stats = new CallStatsSampler();
 
@@ -55,9 +57,13 @@ export class JsSIPSession implements ISipSession {
             // tells it to go ahead with the candidates gathered so far.
             const scheduled = new WeakSet<() => void>();
             this.session.on("icecandidate", (event: { ready: () => void }) => {
-                if (scheduled.has(event.ready)) return;
+                if (this.terminated || scheduled.has(event.ready)) return;
                 scheduled.add(event.ready);
-                setTimeout(() => event.ready(), iceGatheringTimeoutMs);
+                const timer = setTimeout(() => {
+                    this.iceTimers.delete(timer);
+                    if (!this.terminated) event.ready();
+                }, iceGatheringTimeoutMs);
+                this.iceTimers.add(timer);
             });
         }
 
@@ -95,25 +101,33 @@ export class JsSIPSession implements ISipSession {
         });
 
         this.session.on("peerconnection", (event) => {
+            if (this.terminated) return;
             const pc = event.peerconnection;
-            pc.addEventListener("track", (trackEvent) => {
-                if (this.remoteElement && trackEvent.streams?.[0]) {
+            const onTrack = (trackEvent: RTCTrackEvent) => {
+                if (!this.terminated && this.remoteElement && trackEvent.streams?.[0]) {
                     assignStream(trackEvent.streams[0], this.remoteElement);
                 }
-            });
-
+            };
             const emitMediaState = () => {
+                if (this.terminated) return;
                 this.bus.emit('media-state', {
                     iceConnectionState: pc.iceConnectionState,
                     connectionState: pc.connectionState,
                 });
             };
-            pc.addEventListener('connectionstatechange', emitMediaState);
-            pc.addEventListener('iceconnectionstatechange', () => {
+            const onIceChange = () => {
                 emitMediaState();
-                if (pc.iceConnectionState === 'failed') {
+                if (!this.terminated && pc.iceConnectionState === 'failed') {
                     this.bus.emit('media-failed', { reason: 'ICE connection failed.' });
                 }
+            };
+            pc.addEventListener('track', onTrack);
+            pc.addEventListener('connectionstatechange', emitMediaState);
+            pc.addEventListener('iceconnectionstatechange', onIceChange);
+            this.peerConnectionCleanups.add(() => {
+                pc.removeEventListener('track', onTrack);
+                pc.removeEventListener('connectionstatechange', emitMediaState);
+                pc.removeEventListener('iceconnectionstatechange', onIceChange);
             });
         });
 
@@ -355,6 +369,16 @@ export class JsSIPSession implements ISipSession {
     }
 
     private cleanupAudio(): void {
+        for (const timer of this.iceTimers) clearTimeout(timer);
+        this.iceTimers.clear();
+        for (const cleanup of this.peerConnectionCleanups) cleanup();
+        this.peerConnectionCleanups.clear();
+        if (this.screenTrack) {
+            this.screenTrack.onended = null;
+            this.screenTrack.stop();
+        }
+        this.screenTrack = undefined;
+        this.originalVideoTrack = undefined;
         releaseElement(this.remoteElement);
     }
 

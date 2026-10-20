@@ -894,6 +894,10 @@ export class SipClient {
     // ─── Unregister / cleanup ────────────────────────────────────────────────
 
     async unregister(): Promise<void> {
+        // Signal intent immediately: a queued unregister must cancel pending retries.
+        this.intentionalDisconnect = true;
+        this.started = false;
+        this.clearTimers();
         return this.enqueue(() => this.doUnregister());
     }
 
