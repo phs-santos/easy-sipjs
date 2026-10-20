@@ -1,3 +1,4 @@
+import { withActualContentLength } from './content-length.js';
 import {
     UserAgent,
     Registerer,
@@ -48,7 +49,6 @@ const DEFAULT_ICE_GATHERING_TIMEOUT_MS = 1000;
 // Above SIP Timer F (32s), after which the stack itself fails the request with a 408.
 const REGISTER_TIMEOUT_MS = 40000;
 const FORCED_DISCONNECT_TIMEOUT_MS = 2000;
-const textEncoder = new TextEncoder();
 
 const DEFAULT_MEDIA_RECOVERY_ATTEMPTS = 2;
 const DEFAULT_DISCONNECTED_GRACE_MS = 3000;
@@ -111,6 +111,10 @@ export class SipJSSession implements ISipSession {
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
+    /** Sender created by shareScreen() on a call that had no video; reused by later shares. */
+    private screenSender?: RTCRtpSender;
+    /** Microphone picked with setAudioInput(), so later re-INVITEs that re-acquire media keep it. */
+    private audioInputDeviceId?: string;
     private _muted = false;
     private reinviteInProgress = false;
     private terminated = false;
@@ -242,8 +246,10 @@ export class SipJSSession implements ISipSession {
             // adds the resulting track to the peer connection when `constraints.video`
             // flips to true on a re-INVITE — no manual getUserMedia/addTrack needed here.
             await this.reinvite({
-                sessionDescriptionHandlerOptions: { constraints: { audio: true, video: true } },
+                sessionDescriptionHandlerOptions: { constraints: { audio: this.audioConstraint(), video: true } },
             });
+            // Re-acquiring media brings a fresh, enabled microphone track.
+            if (this._muted) this.toggleAudioTracks(false);
         } finally {
             this.reinviteInProgress = false;
         }
@@ -268,7 +274,7 @@ export class SipJSSession implements ISipSession {
             await sender.replaceTrack(null);
             try {
                 await this.reinvite({
-                    sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } },
+                    sessionDescriptionHandlerOptions: { constraints: { audio: this.audioConstraint(), video: false } },
                 });
                 track.stop();
             } catch (error) {
@@ -327,28 +333,51 @@ export class SipJSSession implements ISipSession {
         await setElementSink(this.remoteElement, deviceId);
     }
 
+    private audioInputChangePending = false;
+
+    /** An empty id or `'default'` goes back to the system's default microphone. */
     async setAudioInput(deviceId: string): Promise<void> {
+        this.audioInputDeviceId = deviceId && deviceId !== 'default' ? deviceId : undefined;
         const pc = this.getPeerConnection();
-        if (!pc) return;
+        if (!pc || this.terminated) throw new Error("No active session for audio input change");
+        if (this.audioInputChangePending) throw new Error("Audio input change already in progress");
         const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (!sender) return;
-
-        const previousTrack = sender.track;
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
-        const [newTrack] = stream.getAudioTracks();
-
-        if (!newTrack) {
-            stream.getTracks().forEach(track => track.stop());
-            throw new Error("No audio track found for selected input device");
-        }
-
+        if (!sender) throw new Error("No audio sender available");
+        this.audioInputChangePending = true;
         try {
-            await sender.replaceTrack(newTrack);
-        } catch (error) {
-            newTrack.stop();
-            throw error;
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: this.audioConstraint() });
+            const [newTrack] = stream.getAudioTracks();
+            if (!newTrack) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new Error("No audio track found for selected input device");
+            }
+            // A muted call stays muted on the new microphone.
+            newTrack.enabled = !this._muted;
+            if (this.terminated || this.getPeerConnection() !== pc) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new Error("Session ended while changing audio input");
+            }
+            const previousTrack = sender.track;
+            try {
+                await sender.replaceTrack(newTrack);
+            } catch (error) {
+                stream.getTracks().forEach(track => track.stop());
+                throw error;
+            }
+            // Keep sip.js's local stream in step, so previews and later re-INVITEs see the new track.
+            const localStream = this.getHandler()?.localMediaStream;
+            if (localStream) {
+                if (previousTrack) localStream.removeTrack(previousTrack);
+                localStream.addTrack(newTrack);
+            }
+            previousTrack?.stop();
+        } finally {
+            this.audioInputChangePending = false;
         }
-        previousTrack?.stop();
+    }
+
+    private audioConstraint(): boolean | MediaTrackConstraints {
+        return this.audioInputDeviceId ? { deviceId: { exact: this.audioInputDeviceId } } : true;
     }
 
     /** 0–1 sets the element volume; above 1 amplifies through a gain node. */
@@ -376,11 +405,23 @@ export class SipJSSession implements ISipSession {
         return this.sendDtmfInfo(tone, durationMs);
     }
 
+    /**
+     * Sends the screen instead of the camera. On an audio-only call the screen track is
+     * added as a new video stream and the call is renegotiated (one re-INVITE); the
+     * microphone is left alone because the media constraints don't change.
+     */
     async shareScreen(): Promise<void> {
         const pc = this.getPeerConnection();
-        if (!pc) throw new Error("No active peer connection");
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (!sender) throw new Error("No video sender available for screen sharing");
+        if (!pc || this.terminated) throw new Error("No active peer connection");
+        if (this.screenTrack) return;
+        const cameraSender = pc.getSenders().find(s => s.track?.kind === 'video');
+        const needsRenegotiation = !cameraSender && !this.screenSender;
+        if (needsRenegotiation) {
+            if (this.session.state !== SessionState.Established) {
+                throw new SipError('unsupported', "Screen sharing on an audio call needs the call to be established.");
+            }
+            this.assertNoReinviteInProgress();
+        }
 
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const [track] = stream.getVideoTracks();
@@ -388,21 +429,52 @@ export class SipJSSession implements ISipSession {
             stream.getTracks().forEach(t => t.stop());
             throw new Error("No screen video track available");
         }
+        if (this.terminated) {
+            track.stop();
+            throw new SipError('session-terminated', "Session ended while picking the screen to share.");
+        }
 
-        this.originalVideoTrack = sender.track ?? undefined;
+        if (cameraSender) {
+            this.originalVideoTrack = cameraSender.track ?? undefined;
+            await cameraSender.replaceTrack(track);
+        } else if (this.screenSender) {
+            // The video stream from an earlier share is still negotiated: reuse it.
+            await this.screenSender.replaceTrack(track);
+        } else {
+            const localStream = this.getHandler()?.localMediaStream ?? new MediaStream();
+            this.reinviteInProgress = true;
+            let sender: RTCRtpSender | undefined;
+            try {
+                sender = pc.addTrack(track, localStream);
+                await this.reinvite();
+                this.screenSender = sender;
+            } catch (error) {
+                if (sender) { try { pc.removeTrack(sender); } catch { /* already gone */ } }
+                track.stop();
+                throw error;
+            } finally {
+                this.reinviteInProgress = false;
+            }
+        }
+
         this.screenTrack = track;
-        await sender.replaceTrack(track);
         track.onended = () => { this.stopScreenSharing().catch(() => {}); };
     }
 
     async stopScreenSharing(): Promise<void> {
         const pc = this.getPeerConnection();
-        if (!pc) return;
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender && this.originalVideoTrack) {
-            await sender.replaceTrack(this.originalVideoTrack);
+        const screen = this.screenTrack;
+        if (pc && screen) {
+            if (this.screenSender?.track === screen) {
+                // Audio call that only had video for the share: stop sending, keep the stream for next time.
+                await this.screenSender.replaceTrack(null);
+            } else if (this.originalVideoTrack) {
+                const sender = pc.getSenders().find(s => s.track === screen);
+                await sender?.replaceTrack(this.originalVideoTrack);
+            }
         }
-        this.screenTrack?.stop();
+        if (screen) screen.onended = null;
+        screen?.stop();
         this.screenTrack = undefined;
         this.originalVideoTrack = undefined;
     }
@@ -708,9 +780,12 @@ export class SipJSSession implements ISipSession {
         this.bus.emit('dtmf', { tone, durationMs, mode: 'rtp-event' });
     }
 
+    private getHandler(): Web.SessionDescriptionHandler | undefined {
+        return this.session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
+    }
+
     private getPeerConnection(): RTCPeerConnection | undefined {
-        const handler = this.session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
-        return handler?.peerConnection;
+        return this.getHandler()?.peerConnection;
     }
 
     private cleanupMedia(): void {
@@ -719,8 +794,10 @@ export class SipJSSession implements ISipSession {
         this.recoveryBoundTo = undefined;
         if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
         this.recoveryTimer = undefined;
+        if (this.screenTrack) this.screenTrack.onended = null;
         this.screenTrack?.stop();
         this.screenTrack = undefined;
+        this.screenSender = undefined;
         this.originalVideoTrack = undefined;
         releaseElement(this.remoteElement);
         releaseElement(this.localElement);
@@ -827,7 +904,8 @@ export class SipJSProvider implements ISipProvider {
             onInvite: (invitation: Invitation) => {
                 const sipInvitation = this.mapToInvitation(invitation);
 
-                invitation.progress().catch(() => {});
+                // No explicit progress(): sip.js already sends 180 Ringing by itself
+                // (sendInitialProvisionalResponse), and a second call sent it twice.
                 invitation.stateChange.addListener((state) => {
                     if (state === SessionState.Terminated) sipInvitation.onTerminate?.();
                 });
@@ -854,10 +932,13 @@ export class SipJSProvider implements ISipProvider {
             userAgentString,
             contactParams,
             delegate: userAgentDelegate,
-            logLevel: debug ? "log" : "error",
-            logConnector: debug
+            // Warnings and errors always reach onSipLog; `debug` adds the full SIP traffic.
+            logLevel: debug ? "log" : "warn",
+            // sip.js calls the connector for every level, whatever logLevel says.
+            logConnector: onSipLog
                 ? (level: string, category: string, label: string | undefined, content: string) => {
-                    onSipLog?.(level, category, label || "", content);
+                    if (!debug && level !== 'warn' && level !== 'error') return;
+                    onSipLog(level, category, label || "", content);
                 }
                 : undefined,
             sessionDescriptionHandlerFactoryOptions: {
@@ -866,10 +947,10 @@ export class SipJSProvider implements ISipProvider {
             }
         });
 
-        if (!uniqueContact) {
-            this.userAgent.contact.pubGruu = uri;
-            this.userAgent.contact.tempGruu = uri;
-        }
+        // No GRUU is forced here. sip.js puts a GRUU in the Contact of INVITEs and 200 OKs,
+        // so using the AOR as one made in-dialog requests (the ACK of an answered call,
+        // BYE, re-INVITE) go to the domain instead of this WebSocket: answered calls dropped
+        // after 32 s without the ACK. REGISTER never used it — it takes `contact.uri`.
 
         await this.userAgent.start();
         this.patchContentLengthForModifiedSipBodies();
@@ -1148,14 +1229,7 @@ export class SipJSProvider implements ISipProvider {
         const transport = this.userAgent?.transport;
         if (!transport || typeof transport.onMessage !== 'function') return;
         const origOnMessage = transport.onMessage.bind(transport);
-        transport.onMessage = (raw: string) => {
-            const sep = raw.indexOf('\r\n\r\n');
-            if (sep === -1) return origOnMessage(raw);
-            const body = raw.slice(sep + 4);
-            const actualBodyLen = textEncoder.encode(body).length;
-            const patched = raw.replace(/Content-Length:\s*\d+\r\n/i, `Content-Length: ${actualBodyLen}\r\n`);
-            origOnMessage(patched);
-        };
+        transport.onMessage = (raw: string) => origOnMessage(withActualContentLength(raw));
     }
 
     getRegisterResult(): SipRegisterResult {

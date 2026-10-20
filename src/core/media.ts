@@ -8,10 +8,16 @@ export function assignStream(stream: MediaStream, element: HTMLMediaElement): vo
     if (element.srcObject !== stream) {
         element.srcObject = stream;
     }
-    element.play().catch(err => console.error("Media play failed:", err));
+    element.play().catch(reportPlayError);
 
-    stream.onaddtrack = () => element.play().catch(console.error);
-    stream.onremovetrack = () => element.play().catch(console.error);
+    stream.onaddtrack = () => element.play().catch(reportPlayError);
+    stream.onremovetrack = () => element.play().catch(reportPlayError);
+}
+
+/** AbortError only means the element was paused (call ended) before playback started. */
+function reportPlayError(error: unknown): void {
+    if (error instanceof Error && error.name === 'AbortError') return;
+    console.error("Media play failed:", error);
 }
 
 export function releaseElement(element?: HTMLMediaElement): void {

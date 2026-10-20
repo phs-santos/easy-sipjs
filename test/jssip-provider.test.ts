@@ -7,8 +7,9 @@ function createFakeSession(connection?: unknown) {
         on: vi.fn(),
         sendDTMF: vi.fn(),
         terminate: vi.fn(),
-        hold: vi.fn(),
-        unhold: vi.fn(),
+        hold: vi.fn().mockReturnValue(true),
+        unhold: vi.fn().mockReturnValue(true),
+        isOnHold: vi.fn().mockReturnValue({ local: false, remote: false }),
         connection,
         isReadyToReOffer: vi.fn().mockReturnValue(true),
         renegotiate: vi.fn((_options?: unknown, done?: () => void) => { done?.(); return true; }),
@@ -386,5 +387,95 @@ describe('JsSIPSession resource cleanup', () => {
         for (const [name, handler] of addEventListener.mock.calls) {
             expect(removeEventListener).toHaveBeenCalledWith(name, handler);
         }
+    });
+});
+
+
+describe("JsSIPSession hold/unhold failure reporting", () => {
+    it("rejects hold when the provider cannot renegotiate", async () => {
+        const raw = createFakeSession();
+        raw.isReadyToReOffer.mockReturnValue(false);
+        const session = new JsSIPSession(raw);
+        await expect(session.hold()).rejects.toThrow(/not ready/);
+        expect(raw.hold).not.toHaveBeenCalled();
+    });
+
+    it("rejects a failed hold request rather than silently resolving", async () => {
+        const raw = createFakeSession();
+        raw.hold.mockReturnValue(false);
+        const session = new JsSIPSession(raw);
+        await expect(session.hold()).rejects.toThrow(/rejected hold/);
+    });
+
+    it("rejects a failed unhold request", async () => {
+        const raw = createFakeSession();
+        raw.isOnHold.mockReturnValue({ local: true, remote: false });
+        raw.unhold.mockReturnValue(false);
+        const session = new JsSIPSession(raw);
+        await expect(session.unhold()).rejects.toThrow(/rejected unhold/);
+    });
+});
+
+describe('JsSIPSession downgradeToAudio rollback', () => {
+    function setup() {
+        const track = { kind: 'video', stop: vi.fn() };
+        const sender = { track: track as unknown as MediaStreamTrack | null, replaceTrack: vi.fn(async (next: MediaStreamTrack | null) => { sender.track = next; }) };
+        const raw = createFakeSession({ getSenders: () => [sender] });
+        const session = new JsSIPSession(raw);
+        return { track, sender, raw, session };
+    }
+
+    it('restores the original live video track when renegotiation is refused', async () => {
+        const { track, sender, raw, session } = setup();
+        raw.renegotiate.mockReturnValue(false);
+        await expect(session.downgradeToAudio()).rejects.toThrow('Unable to renegotiate');
+        expect(track.stop).not.toHaveBeenCalled();
+        expect(sender.track).toBe(track);
+        expect(sender.replaceTrack).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops the original video track only after successful renegotiation', async () => {
+        const { track, sender, session } = setup();
+        await session.downgradeToAudio();
+        expect(sender.track).toBeNull();
+        expect(track.stop).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("JsSIPSession ICE recovery lifecycle", () => {
+    function failedConnection() {
+        return { iceConnectionState: "failed" };
+    }
+
+    it("shares one renegotiation across concurrent recovery calls", async () => {
+        const raw = createFakeSession(failedConnection());
+        let complete: (() => void) | undefined;
+        raw.renegotiate.mockImplementation((_options, done) => { complete = done; return true; });
+        const session = new JsSIPSession(raw);
+        const first = session.recoverMedia();
+        const second = session.recoverMedia();
+        expect(raw.renegotiate).toHaveBeenCalledTimes(1);
+        complete?.();
+        await Promise.all([first, second]);
+    });
+
+    it("rejects pending recovery on termination and ignores a late callback", async () => {
+        const raw = createFakeSession(failedConnection());
+        let complete: (() => void) | undefined;
+        raw.renegotiate.mockImplementation((_options, done) => { complete = done; return true; });
+        const session = new JsSIPSession(raw);
+        const pending = session.recoverMedia();
+        const rejection = expect(pending).rejects.toThrow("Session ended during ICE recovery");
+        trigger(raw, "ended", { originator: "remote", cause: "Terminated" });
+        await rejection;
+        complete?.();
+        expect(raw.renegotiate).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a refused ICE restart instead of silently succeeding", async () => {
+        const raw = createFakeSession(failedConnection());
+        raw.renegotiate.mockReturnValue(false);
+        const session = new JsSIPSession(raw);
+        await expect(session.recoverMedia()).rejects.toThrow("Unable to renegotiate");
     });
 });

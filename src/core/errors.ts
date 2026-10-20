@@ -11,6 +11,7 @@ export type SipErrorCode =
     | 'reinvite-in-progress'
     | 'transport-not-ready'
     | 'media-unavailable'
+    | 'session-terminated'
     | 'unsupported';
 
 export interface SipErrorDetails {

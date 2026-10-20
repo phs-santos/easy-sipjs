@@ -1,4 +1,5 @@
 import JsSIP from "jssip";
+import { withActualContentLength } from './content-length.js';
 import type { DTMF_TRANSPORT } from "jssip/lib/Constants.js";
 import type { RTCSession, EndEvent, IncomingEvent, OutgoingEvent, IncomingDTMFEvent, OutgoingDTMFEvent, HoldEvent, AnswerOptions as JsSipAnswerOptions, TerminateOptions as JsSipTerminateOptions, DTMFOptions as JsSipDtmfOptions } from "jssip/lib/RTCSession.js";
 import type { UA, RTCSessionEvent, IncomingMessageEvent, OutgoingMessageEvent } from "jssip/lib/UA.js";
@@ -41,7 +42,12 @@ export class JsSIPSession implements ISipSession {
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
+    /** Sender created by shareScreen() on a call that had no video; reused by later shares. */
+    private screenSender?: RTCRtpSender;
     private terminated = false;
+    private audioInputChangePending = false;
+    private mediaRecoveryPending?: Promise<void>;
+    private cancelMediaRecovery?: () => void;
     private iceTimers = new Set<ReturnType<typeof setTimeout>>();
     private peerConnectionCleanups = new Set<() => void>();
     private bus = new SessionEventBus();
@@ -206,11 +212,35 @@ export class JsSIPSession implements ISipSession {
     unmuteVideo(): void { this.session.unmute({ video: true }); }
 
     async hold(): Promise<void> {
-        this.session.hold();
+        if (this.terminated) throw new Error("Cannot hold a terminated session");
+        if (this.session.isOnHold().local) return;
+        if (!this.session.isReadyToReOffer()) throw new Error("Session is not ready for hold renegotiation");
+        await this.awaitReOffer('hold', done => this.session.hold({}, done));
     }
 
     async unhold(): Promise<void> {
-        this.session.unhold();
+        if (this.terminated) throw new Error("Cannot unhold a terminated session");
+        if (!this.session.isOnHold().local) return;
+        if (!this.session.isReadyToReOffer()) throw new Error("Session is not ready for unhold renegotiation");
+        await this.awaitReOffer('unhold', done => this.session.unhold({}, done));
+    }
+
+    /**
+     * JsSIP's hold()/unhold() return as soon as the re-INVITE is sent; `done` only runs once
+     * the peer accepts it. Waiting for it makes the promise mean what it does on SIP.js. If
+     * the re-INVITE fails, JsSIP itself ends the call, which rejects here.
+     */
+    private awaitReOffer(action: 'hold' | 'unhold', start: (done: () => void) => boolean): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const stopWatching = this.bus.on('terminated', () => {
+                reject(new SipError('session-terminated', `Session ended before the ${action} was confirmed.`));
+            });
+            const started = start(() => { stopWatching(); resolve(); });
+            if (!started) {
+                stopWatching();
+                reject(new Error(`JsSIP rejected ${action} renegotiation`));
+            }
+        });
     }
 
     async upgradeToVideo(): Promise<void> {
@@ -249,23 +279,59 @@ export class JsSIPSession implements ISipSession {
         const sender = pc.getSenders().find(s => s.track?.kind === 'video');
         if (!sender?.track) return;
 
-        sender.track.stop();
+        // Keep the original track alive until JsSIP confirms renegotiation.
+        // Otherwise a rejected re-INVITE permanently kills the outgoing video.
+        const originalTrack = sender.track;
         await sender.replaceTrack(null);
-        await new Promise<void>((resolve, reject) => {
-            const started = this.session.renegotiate({}, () => resolve());
-            if (!started) reject(new Error("Unable to renegotiate: session not ready for a new offer."));
-        });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const started = this.session.renegotiate({}, () => resolve());
+                if (!started) reject(new SipError('reinvite-in-progress', "Unable to renegotiate: session not ready for a new offer."));
+            });
+            originalTrack.stop();
+        } catch (error) {
+            // Do not mask the signaling error if restoration also fails.
+            if (!this.terminated && sender.track === null) {
+                await sender.replaceTrack(originalTrack).catch(() => {});
+            }
+            throw error;
+        }
     }
 
     async recoverMedia(): Promise<void> {
+        if (this.terminated) return;
+        // Share the in-flight attempt rather than issuing concurrent re-INVITEs.
+        if (this.mediaRecoveryPending) return this.mediaRecoveryPending;
         const pc = this.session.connection;
-        if (!pc || this.terminated) return;
-        if (pc.iceConnectionState !== 'failed' && pc.iceConnectionState !== 'disconnected') return;
+        if (!pc || (pc.iceConnectionState !== 'failed' && pc.iceConnectionState !== 'disconnected')) return;
         if (!this.session.isReadyToReOffer()) return;
-        await new Promise<void>((resolve, reject) => {
-            const started = this.session.renegotiate({ rtcOfferConstraints: { iceRestart: true } }, () => resolve());
-            if (!started) reject(new SipError('reinvite-in-progress', "Unable to renegotiate: session not ready for a new offer."));
+
+        const attempt = new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const finish = (error?: Error) => {
+                if (settled) return;
+                settled = true;
+                this.cancelMediaRecovery = undefined;
+                if (error) reject(error);
+                else resolve();
+            };
+            this.cancelMediaRecovery = () => finish(new SipError('session-terminated', 'Session ended during ICE recovery.'));
+            try {
+                const started = this.session.renegotiate(
+                    { rtcOfferConstraints: { iceRestart: true } },
+                    () => finish(this.terminated ? new SipError('session-terminated', 'Session ended during ICE recovery.') : undefined),
+                );
+                if (!started) finish(new SipError('reinvite-in-progress', 'Unable to renegotiate: session not ready for a new offer.'));
+            } catch (error) {
+                finish(error instanceof Error ? error : new Error(String(error)));
+            }
         });
+        this.mediaRecoveryPending = attempt;
+        try {
+            await attempt;
+        } finally {
+            if (this.mediaRecoveryPending === attempt) this.mediaRecoveryPending = undefined;
+        }
     }
 
     async transfer(target: string | ISipSession): Promise<void> {
@@ -296,21 +362,39 @@ export class JsSIPSession implements ISipSession {
     }
 
     async setAudioInput(deviceId: string): Promise<void> {
+        if (this.terminated) throw new Error("Cannot change audio input on a terminated session");
+        if (this.audioInputChangePending) throw new Error("Audio input change already in progress");
         const pc = this.session.connection;
-        if (!pc) return;
+        if (!pc) throw new Error("No active peer connection");
         const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (!sender) return;
-        const previousTrack = sender.track;
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
-        const [newTrack] = stream.getAudioTracks();
-        if (!newTrack) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); return; }
+        if (!sender) throw new Error("No audio sender available");
+        this.audioInputChangePending = true;
         try {
-            await sender.replaceTrack(newTrack);
-        } catch (error) {
-            newTrack.stop();
-            throw error;
+            // An empty id or 'default' goes back to the system's default microphone.
+            const audio = deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true;
+            const stream = await navigator.mediaDevices.getUserMedia({ audio });
+            const [newTrack] = stream.getAudioTracks();
+            if (!newTrack) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new Error("No audio track found for selected input device");
+            }
+            // A muted call stays muted on the new microphone.
+            newTrack.enabled = !this.session.isMuted?.()?.audio;
+            if (this.terminated || this.session.connection !== pc) {
+                stream.getTracks().forEach(track => track.stop());
+                throw new Error("Session ended while changing audio input");
+            }
+            const previousTrack = sender.track;
+            try {
+                await sender.replaceTrack(newTrack);
+            } catch (error) {
+                stream.getTracks().forEach(track => track.stop());
+                throw error;
+            }
+            previousTrack?.stop();
+        } finally {
+            this.audioInputChangePending = false;
         }
-        previousTrack?.stop();
     }
 
     /** 0–1 sets the element volume; above 1 amplifies through a gain node. */
@@ -330,28 +414,66 @@ export class JsSIPSession implements ISipSession {
         this.bus.emit('dtmf', { tone, durationMs: options.durationMs, mode: options.mode });
     }
 
+    /**
+     * Sends the screen instead of the camera. On an audio-only call the screen track is
+     * added as a new video stream and the call is renegotiated.
+     */
     async shareScreen(): Promise<void> {
         const pc = this.session.connection;
-        if (!pc) throw new Error("No active peer connection");
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (!sender) throw new Error("No video sender available for screen sharing");
+        if (!pc || this.terminated) throw new Error("No active peer connection");
+        if (this.screenTrack) return;
+        const cameraSender = pc.getSenders().find(s => s.track?.kind === 'video');
+        const needsRenegotiation = !cameraSender && !this.screenSender;
+        if (needsRenegotiation && !this.session.isReadyToReOffer()) {
+            throw new SipError('reinvite-in-progress', "Session is not ready for a new offer.");
+        }
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const [track] = stream.getVideoTracks();
         if (!track) { stream.getTracks().forEach((t: MediaStreamTrack) => t.stop()); throw new Error("No screen video track available"); }
-        this.originalVideoTrack = sender.track ?? undefined;
+        if (this.terminated) {
+            track.stop();
+            throw new SipError('session-terminated', "Session ended while picking the screen to share.");
+        }
+
+        if (cameraSender) {
+            this.originalVideoTrack = cameraSender.track ?? undefined;
+            await cameraSender.replaceTrack(track);
+        } else if (this.screenSender) {
+            // The video stream from an earlier share is still negotiated: reuse it.
+            await this.screenSender.replaceTrack(track);
+        } else {
+            let sender: RTCRtpSender | undefined;
+            try {
+                sender = pc.addTrack(track, stream);
+                await new Promise<void>((resolve, reject) => {
+                    const started = this.session.renegotiate({}, () => resolve());
+                    if (!started) reject(new SipError('reinvite-in-progress', "Unable to renegotiate: session not ready for a new offer."));
+                });
+                this.screenSender = sender;
+            } catch (error) {
+                if (sender) { try { pc.removeTrack(sender); } catch { /* already gone */ } }
+                track.stop();
+                throw error;
+            }
+        }
         this.screenTrack = track;
-        await sender.replaceTrack(track);
         track.onended = () => { this.stopScreenSharing().catch(() => {}); };
     }
 
     async stopScreenSharing(): Promise<void> {
         const pc = this.session.connection;
-        if (!pc) return;
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender && this.originalVideoTrack) {
-            await sender.replaceTrack(this.originalVideoTrack);
+        const screen = this.screenTrack;
+        if (pc && screen) {
+            if (this.screenSender?.track === screen) {
+                // Audio call that only had video for the share: stop sending, keep the stream for next time.
+                await this.screenSender.replaceTrack(null);
+            } else if (this.originalVideoTrack) {
+                const sender = pc.getSenders().find(s => s.track === screen);
+                await sender?.replaceTrack(this.originalVideoTrack);
+            }
         }
-        this.screenTrack?.stop();
+        if (screen) screen.onended = null;
+        screen?.stop();
         this.screenTrack = undefined;
         this.originalVideoTrack = undefined;
     }
@@ -378,6 +500,7 @@ export class JsSIPSession implements ISipSession {
             this.screenTrack.stop();
         }
         this.screenTrack = undefined;
+        this.screenSender = undefined;
         this.originalVideoTrack = undefined;
         releaseElement(this.remoteElement);
     }
@@ -385,6 +508,7 @@ export class JsSIPSession implements ISipSession {
     private emitTerminatedOnce(event?: SipFailureEvent): void {
         if (this.terminated) return;
         this.terminated = true;
+        this.cancelMediaRecovery?.();
         this.onTerminate?.();
         this.bus.emit('state', 'terminated');
         this.bus.emit('terminated', event);
@@ -405,9 +529,9 @@ export class JsSIPProvider implements ISipProvider {
         credentials: SipCredentials,
         onUserAgent: ISipUserAgentDelegate,
         onRegister: ISipRegisterDelegate,
-        _onSipLog?: (level: string, category: string, label: string, content: string) => void
+        onSipLog?: (level: string, category: string, label: string, content: string) => void
     ): Promise<void> {
-        const { domain, phone, secret, nameexten, server, iceServers, authorizationUsername } = credentials;
+        const { domain, phone, secret, nameexten, server, iceServers, authorizationUsername, debug, userAgentString } = credentials;
 
         if (!server) throw new SipError('not-initialized', "'server' (WebSocket URL) is required for the JsSIP provider.");
 
@@ -415,12 +539,17 @@ export class JsSIPProvider implements ISipProvider {
         this.onUserAgent = onUserAgent;
         this.sessionSettings = { iceGatheringTimeoutMs: credentials.iceGatheringTimeoutMs, dtmfMode: credentials.dtmfMode };
         const socket = new JsSIP.WebSocketInterface(server);
+        hookSocket(socket, debug ? onSipLog : undefined);
+        // JsSIP's own diagnostics (why a message was dropped, transaction states…) only go to
+        // the browser console, through the `debug` package. `debug` turns them on there.
+        if (debug) JsSIP.debug.enable('JsSIP:*');
         const configuration = {
             sockets: [socket],
             uri: `sip:${phone}@${domain}`,
             authorization_user: authorizationUsername ?? phone,
             password: secret,
             display_name: nameexten ?? phone,
+            ...(userAgentString ? { user_agent: userAgentString } : {}),
             register: true,
             pcConfig: iceServers ? { iceServers } : undefined
         };
@@ -641,4 +770,36 @@ export class JsSIPProvider implements ISipProvider {
     }
 
     public getUA(): UA | undefined { return this.ua; }
+}
+
+/**
+ * Wraps the WebSocket JsSIP uses. Incoming messages always get their Content-Length
+ * recomputed (see withActualContentLength): without it JsSIP silently dropped the 200 OK
+ * of a hold re-INVITE whose SDP a proxy had rewritten, and never sent the ACK.
+ * With `trace` (debug), the raw SIP traffic also goes to onSipLog — JsSIP has no log hook
+ * like sip.js's logConnector. Incoming data arrives through the `ondata` handler the
+ * transport installs on every (re)connect.
+ */
+function hookSocket(socket: JsSIP.WebSocketInterface, trace?: (level: string, category: string, label: string, content: string) => void) {
+    const target = socket as unknown as { send(message: unknown): boolean; ondata?: (data: unknown) => void };
+    const text = (data: unknown) => (typeof data === 'string' ? data : '[binary frame]');
+    if (trace) {
+        const send = target.send.bind(target);
+        target.send = (message: unknown) => {
+            if (message !== '\r\n') trace('log', 'jssip.Transport', '', `sending WebSocket message:\n\n${text(message)}`);
+            return send(message);
+        };
+    }
+    let handler: ((data: unknown) => void) | undefined;
+    Object.defineProperty(target, 'ondata', {
+        configurable: true,
+        get: () => handler,
+        set: (fn: ((data: unknown) => void) | undefined) => {
+            handler = fn && ((data: unknown) => {
+                const message = typeof data === 'string' ? withActualContentLength(data) : data;
+                if (trace && message !== '\r\n') trace('log', 'jssip.Transport', '', `received WebSocket message:\n\n${text(message)}`);
+                fn(message);
+            });
+        },
+    });
 }

@@ -3,9 +3,23 @@
 ## [Unreleased]
 
 ### Corrigido
+- JsSIP: o hold falhava atrás do dSIPRouter/Kamailio — o proxy reescreve o SDP do 200 OK e deixa o `Content-Length` 1 byte maior que o corpo, e o JsSIP descartava a resposta sem mandar o ACK. As mensagens recebidas agora têm o `Content-Length` recalculado (o provider SIP.js já fazia isso; a lógica virou `core/content-length.ts`, compartilhada).
+- JsSIP: `hold()`/`unhold()` só resolvem quando o PBX aceita o re-INVITE (antes resolviam ao enviar, e o app mostrava "em espera" sem confirmação); rejeitam com `session-terminated` se a chamada acabar antes. O JsSIP também passa a usar o `userAgentString`.
+- SIP.js: o `180 Ringing` de uma chamada recebida saía duas vezes (o sip.js já envia sozinho e a lib chamava `progress()` de novo).
+- `play() interrupted by pause()` não aparece mais como erro no console quando a chamada termina antes de o áudio começar.
+- SIP.js: chamadas **recebidas** caíam após 32 s ("No ACK received"). A lib forçava o endereço do ramal (AOR) como GRUU, e o SIP.js usa a GRUU como Contact do INVITE e do 200 OK; o ACK (e BYE/re-INVITE do PBX) ia para o domínio em vez do WebSocket. O Contact de registro não muda.
 - Sessões liberam timers de ICE, listeners do RTCPeerConnection e a captura de tela ao terminar (JsSIP e SIP.js).
 - Callbacks de um registro encerrado ou substituído (conexão, REGISTER, INVITE, reconexão, ping) não alteram mais o estado do cliente.
 - `updateCredentials()` volta a registrar quando chamado depois de `disconnect()`.
+- JsSIP: `hold()`/`unhold()` rejeitam quando o JsSIP não aceita a renegociação, em vez de resolver em silêncio.
+- JsSIP: `downgradeToAudio()` mantém o vídeo se a renegociação for recusada; `recoverMedia()` não dispara re-INVITEs simultâneos e rejeita se a chamada termina no meio.
+- `setAudioInput()`: id vazio ou `'default'` volta ao microfone padrão (antes dava `OverconstrainedError`); a chamada no mudo continua no mudo; trocas simultâneas ou com a chamada encerrada são recusadas sem vazar a captura.
+- SIP.js: `upgradeToVideo()` mantém o microfone escolhido e o mudo.
+- `shareScreen()` funciona em chamada só de áudio: adiciona a tela como vídeo com um re-INVITE.
+- `onSipLog` recebe avisos e erros do SIP.js mesmo sem `debug`; com `debug`, o JsSIP também envia o tráfego SIP (antes não enviava nada).
+
+### Adicionado
+- Código de erro `session-terminated` em `SipError`.
 
 ### Alterado
 - `npm run release` publica no npm direto da máquina de quem roda (exige `npm login`), logo depois do push da tag. O workflow de publicação do GitHub Actions foi removido.
