@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionState } from "sip.js";
 import { SipJSSession } from "../src/core/sipjs-provider.js";
-import { JsSIPSession } from "../src/core/jssip-provider.js";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -48,26 +47,7 @@ function sipJsSession() {
     return { session: new SipJSSession(raw), sender };
 }
 
-function jsSipSession() {
-    const sender = {
-        track: fakeTrack() as unknown,
-        replaceTrack: vi.fn(async (t: unknown) => {
-            sender.track = t;
-        }),
-    };
-    const raw = {
-        id: "s1",
-        on: vi.fn(),
-        terminate: vi.fn(),
-        connection: { getSenders: () => [sender] },
-    };
-    return { session: new JsSIPSession(raw as any), sender };
-}
-
-const providers = [
-    ["SIP.js", sipJsSession],
-    ["JsSIP", jsSipSession],
-] as const;
+const providers = [["SIP.js", sipJsSession]] as const;
 
 afterEach(() => {
     vi.restoreAllMocks();

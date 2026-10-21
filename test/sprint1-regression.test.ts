@@ -1,9 +1,8 @@
 // Sprint 1 — limpeza de recursos ao encerrar sessões (doc/CHANGELOG-FIXES.md, FIX-001 a FIX-005).
-// FIX-001 e FIX-002 (JsSIP) já estão em jssip-provider.test.ts; aqui ficam os que estavam pendentes.
+// Regressões de limpeza de recursos e recuperação do provider SIP.js.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionState } from "sip.js";
 import { SipJSSession } from "../src/core/sipjs-provider.js";
-import { JsSIPSession } from "../src/core/jssip-provider.js";
 import { SipClient } from "../src/index.js";
 import type {
     ISipProvider,
@@ -92,61 +91,6 @@ describe("FIX-002 (SIP.js) listeners do RTCPeerConnection", () => {
         fireIce("disconnected");
 
         expect(mediaState).not.toHaveBeenCalled();
-    });
-});
-
-describe("FIX-003 (JsSIP) compartilhamento de tela no encerramento", () => {
-    function createSharingSession() {
-        const handlers = new Map<string, (payload?: unknown) => void>();
-        const cameraTrack = { kind: "video", stop: vi.fn() };
-        const sender = {
-            track: cameraTrack as unknown,
-            replaceTrack: vi.fn(async (t: unknown) => {
-                sender.track = t;
-            }),
-        };
-        const raw = {
-            id: "session-1",
-            on: vi.fn((event: string, cb: (payload?: unknown) => void) =>
-                handlers.set(event, cb)
-            ),
-            terminate: vi.fn(),
-            connection: { getSenders: () => [sender] },
-        };
-        const screenTrack = {
-            kind: "video",
-            stop: vi.fn(),
-            onended: null as null | (() => void),
-        };
-        vi.spyOn(navigator.mediaDevices, "getDisplayMedia").mockResolvedValue({
-            getVideoTracks: () => [screenTrack],
-            getTracks: () => [screenTrack],
-        } as any);
-        const session = new JsSIPSession(raw as any);
-        return { raw, session, screenTrack, handlers };
-    }
-
-    afterEach(() => {
-        vi.restoreAllMocks();
-    });
-
-    it("para a track de tela ao desligar sem parar o compartilhamento antes", async () => {
-        const { session, screenTrack } = createSharingSession();
-        await session.shareScreen();
-
-        await session.bye();
-
-        expect(screenTrack.stop).toHaveBeenCalled();
-        expect(screenTrack.onended).toBeNull();
-    });
-
-    it("para a track de tela quando o outro lado encerra a chamada", async () => {
-        const { session, screenTrack, handlers } = createSharingSession();
-        await session.shareScreen();
-
-        handlers.get("ended")?.({ originator: "remote", cause: "Terminated" });
-
-        expect(screenTrack.stop).toHaveBeenCalled();
     });
 });
 

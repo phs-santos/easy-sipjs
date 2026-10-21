@@ -47,7 +47,7 @@ export interface SipClientOptions {
     /** Overrides how a broken media path is recovered mid-call. */
     mediaRecovery?: MediaRecoveryOptions;
     /** Defaults to `sipjs`. The SIP stack is loaded on demand, so only the chosen one ends up in the app's bundle. */
-    provider?: "sipjs" | "jssip";
+    provider?: "sipjs";
     customProvider?: ISipProvider;
     /** Ringtone/ringback. `false` (for everything or per sound) leaves the sounds to the app. */
     sounds?: SoftphoneSounds;
@@ -209,19 +209,17 @@ export class SipClient {
         this.setupNetworkMonitoring();
     }
 
-    /**
-     * Each SIP stack is a separate chunk loaded on demand: an app that only uses
-     * `sipjs` never downloads JsSIP, and the other way around.
-     */
+    /** SIP.js is loaded on demand; custom providers can supply another implementation. */
     private async loadProvider(): Promise<ISipProvider> {
         if (this.provider) return this.provider;
-        if (this.options.provider === "jssip") {
-            const { JsSIPProvider } = await import("./core/jssip-provider.js");
-            this.provider = new JsSIPProvider();
-        } else {
-            const { SipJSProvider } = await import("./core/sipjs-provider.js");
-            this.provider = new SipJSProvider();
+        if (this.options.provider && this.options.provider !== "sipjs") {
+            throw new SipError(
+                "unsupported",
+                "Only the sipjs provider is supported. Remove the old provider setting or use sipjs."
+            );
         }
+        const { SipJSProvider } = await import("./core/sipjs-provider.js");
+        this.provider = new SipJSProvider();
         return this.provider;
     }
 
@@ -247,28 +245,7 @@ export class SipClient {
         };
     }
 
-    // ─── Friendly aliases ────────────────────────────────────────────────────
-
-    async connect(): Promise<SipRegisterResult> {
-        return this.register();
-    }
-    async disconnect(): Promise<void> {
-        return this.unregister();
-    }
-
-    async dial(
-        destination: string,
-        options: Omit<CallOptions, "destination"> = {}
-    ): Promise<ISipSession> {
-        return this.call({ ...options, destination });
-    }
-
-    async accept(
-        invitation: SipInvitation,
-        options: AnswerOptions = {}
-    ): Promise<ISipSession> {
-        return this.answer(invitation, options);
-    }
+    // ─── Shortcuts ───────────────────────────────────────────────────────────
 
     async reject(invitation?: SipInvitation): Promise<void> {
         if (invitation) {
@@ -406,9 +383,9 @@ export class SipClient {
         this.onSipLog?.(level, category, label, safeContent);
     };
 
-    // ─── Register / connect ──────────────────────────────────────────────────
+    // ─── Connect ─────────────────────────────────────────────────────────────
 
-    async register(): Promise<SipRegisterResult> {
+    async connect(): Promise<SipRegisterResult> {
         return this.enqueue(() => {
             this.intentionalDisconnect = false;
             return this.doRegister();
@@ -1064,10 +1041,18 @@ export class SipClient {
 
     // ─── Call control ────────────────────────────────────────────────────────
 
-    async call(options: CallOptions): Promise<ISipSession> {
+    async dial(
+        destinationOrOptions: string | CallOptions,
+        options: Omit<CallOptions, "destination"> = {}
+    ): Promise<ISipSession> {
+        const callOptions: CallOptions =
+            typeof destinationOrOptions === "string"
+                ? { ...options, destination: destinationOrOptions }
+                : destinationOrOptions;
+
         this.playRingback();
         try {
-            const session = await (await this.getProvider()).call(options);
+            const session = await (await this.getProvider()).call(callOptions);
             if (session.on) {
                 session.on("progress", (event) => {
                     if (event?.hasEarlyMedia || event?.statusCode === 183)
@@ -1077,7 +1062,6 @@ export class SipClient {
                 session.on("failed", () => this.stopRingback());
                 session.on("terminated", () => this.stopRingback());
             } else {
-                // Custom providers without an event bus only have the legacy callbacks.
                 const originalOnTerminate = session.onTerminate;
                 session.onTerminate = () => {
                     this.stopRingback();
@@ -1096,9 +1080,9 @@ export class SipClient {
         }
     }
 
-    async answer(
+    async accept(
         invitation: SipInvitation,
-        options: AnswerOptions
+        options: AnswerOptions = {}
     ): Promise<ISipSession> {
         this.stopRingtone();
         const session = await (
@@ -1240,10 +1224,10 @@ export class SipClient {
         await (await this.getProvider()).sendMessage(destination, body);
     }
 
-    // ─── Unregister / cleanup ────────────────────────────────────────────────
+    // ─── Disconnect / cleanup ────────────────────────────────────────────────
 
-    async unregister(): Promise<void> {
-        // Signal intent immediately: a queued unregister must cancel pending retries.
+    async disconnect(): Promise<void> {
+        // Signal intent immediately: a queued disconnect must cancel pending retries.
         this.intentionalDisconnect = true;
         this.lifecycleGeneration++;
         this.started = false;
@@ -1293,10 +1277,8 @@ export class SipClient {
 
 export * from "./core/types.js";
 export * from "./core/provider.js";
-// Types only: the provider classes live in their own entry points (`easy-sipjs/sipjs`,
-// `easy-sipjs/jssip`) so this one doesn't pull both SIP stacks into every bundle.
+// Types only: runtime classes are available from easy-sipjs/sipjs.
 export type { SipJSProvider, SipJSSession } from "./core/sipjs-provider.js";
-export type { JsSIPProvider, JsSIPSession } from "./core/jssip-provider.js";
 export * from "./core/event-emitter.js";
 export * from "./core/device-manager.js";
 export * from "./core/call-quality.js";

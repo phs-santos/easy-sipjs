@@ -59,7 +59,9 @@ function parsePidf(lower: string): PresenceEvent["status"] {
     if (/\bringing\b/.test(lower)) return "ringing";
     if (/on[- ]the[- ]phone|\bbusy\b|on hold|in ?use/.test(lower))
         return "busy";
-    if (lower.includes("<basic>closed</basic>")) return "offline";
-    if (lower.includes("<basic>open</basic>")) return "available";
+    if (/<(?:\w+:)?basic\b[^>]*>\s*closed\s*<\/(?:\w+:)?basic\s*>/.test(lower))
+        return "offline";
+    if (/<(?:\w+:)?basic\b[^>]*>\s*open\s*<\/(?:\w+:)?basic\s*>/.test(lower))
+        return "available";
     return "unknown";
 }

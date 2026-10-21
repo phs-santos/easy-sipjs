@@ -1,6 +1,6 @@
 export type SoftphonePreset = "asterisk" | "kamailio" | "generic";
 /**
- * How a local hold is signalled on the `sipjs` provider (JsSIP has its own):
+ * How a local hold is signalled on the `sipjs` provider:
  * - `asterisk-inactive`: every media line becomes `a=inactive`. Stable on Asterisk paths
  *   that mirror direction attributes in the re-INVITE answer.
  * - `asterisk-sendonly`: `a=sendonly`, the textbook RFC 3264 hold.
@@ -149,8 +149,7 @@ export interface SipReferEvent {
  * caller know whether the transferred call actually connected, not just whether
  * the REFER request itself was accepted.
  *
- * Currently only emitted by the `sipjs` provider — JsSIP doesn't surface these
- * NOTIFYs at the session level, so this stays `unknown`-based/absent on `jssip`.
+ * Emitted by the SIP.js provider for session-level notifications.
  */
 export interface SipTransferProgressEvent {
     /** Status code from the sipfrag body (e.g. 100, 180, 200, 486, 603). */
@@ -310,6 +309,6 @@ export interface CreateSoftphoneConfig {
     iceServers?: RTCIceServer[];
     iceGatheringTimeoutMs?: number;
     debug?: boolean;
-    provider?: "sipjs" | "jssip";
+    provider?: "sipjs";
     sounds?: SoftphoneSounds;
 }

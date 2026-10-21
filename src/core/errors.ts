@@ -12,6 +12,8 @@ export type SipErrorCode =
     | "transport-not-ready"
     | "media-unavailable"
     | "session-terminated"
+    | "subscription-failed"
+    | "subscription-timeout"
     | "unsupported";
 
 export interface SipErrorDetails {

@@ -1,6 +1,6 @@
 # easy-sipjs
 
-SDK de softphone WebRTC/SIP de alto nível sobre **SIP.js** e **JsSIP**. A proposta é simples: quem consome a biblioteca informa ramal, domínio, senha e WebSocket; a lib cuida de registro, reconexão, refresh, mídia, DTMF, health check, qualidade de chamada, devices, presença/BLF e logs seguros.
+SDK de softphone WebRTC/SIP de alto nível sobre **SIP.js**. A proposta é simples: quem consome a biblioteca informa ramal, domínio, senha e WebSocket; a lib cuida de registro, reconexão, refresh, mídia, DTMF, health check, qualidade de chamada, devices, presença/BLF e logs seguros.
 
 ---
 
@@ -236,17 +236,16 @@ client.on("unregistered", () => console.log("registro perdido"));
 - A primeira tentativa depois de uma queda sai em até 500 ms; as seguintes dobram a partir de `reconnectDelay` até `maxReconnectDelay`, com jitter.
 - Quando a rede volta (`online`), o contador de tentativas zera e a reconexão recomeça na hora.
 - Com `healthCheckIntervalMs`, dois pings SIP OPTIONS sem resposta derrubam o socket e reconectam. É o que detecta um WebSocket que parece conectado mas está morto.
-- O refresh do REGISTER fica com o SIP.js/JsSIP, no prazo que o servidor concedeu. O evento `registration-expiring` só existe para `customProvider` sem refresh próprio.
+- O refresh do REGISTER fica com o SIP.js, no prazo que o servidor concedeu. O evento `registration-expiring` só existe para `customProvider` sem refresh próprio.
 
 ---
 
 ## Bundle
 
-Cada stack SIP é carregada sob demanda: quem usa `provider: 'sipjs'` não baixa o JsSIP, e vice-versa. As classes dos providers saíram do entry principal (que continua exportando os tipos):
+O SIP.js é carregado sob demanda. As classes do provider ficam no entry dedicado (o principal exporta os tipos):
 
 ```ts
 import { SipJSProvider, SipJSSession } from "easy-sipjs/sipjs";
-import { JsSIPProvider, JsSIPSession } from "easy-sipjs/jssip";
 ```
 
 ---
@@ -305,16 +304,3 @@ Status normalizados:
 ```ts
 "available" | "busy" | "ringing" | "offline" | "unknown";
 ```
-
----
-
-## Compatibilidade com API antiga
-
-```ts
-await client.register();
-await client.call({ destination: "4002" });
-await client.answer(invitation, {});
-await client.unregister();
-```
-
-Callbacks antigos continuam disponíveis, mas para código novo prefira `client.on(...)` e `session.on(...)`.

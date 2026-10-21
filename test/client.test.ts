@@ -217,14 +217,21 @@ describe("SipClient connect()", () => {
         expect(client.getConnectionState()).toBe("error");
     });
 
+    it("rejects a removed provider instead of silently loading a different stack", async () => {
+        const client = new SipClient(credentials, { provider: "jssip" as any });
+        await expect(client.connect()).rejects.toThrow(
+            "Only the sipjs provider is supported"
+        );
+    });
+
     it("loads only the chosen SIP stack, on demand", async () => {
-        const client = new SipClient(credentials, { provider: "jssip" });
+        const client = new SipClient(credentials, { provider: "sipjs" });
         const provider = await (
             client as unknown as {
                 providerReady: Promise<{ constructor: { name: string } }>;
             }
         ).providerReady;
-        expect(provider.constructor.name).toBe("JsSIPProvider");
+        expect(provider.constructor.name).toBe("SipJSProvider");
     });
 });
 

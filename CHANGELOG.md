@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
+### Removido (mudança incompatível)
+
+- Suporte ao JsSIP: provider `jssip`, export `easy-sipjs/jssip` e dependências associadas. Use `provider: "sipjs"` ou omita o campo. Perfis antigos do cockpit usam SIP.js automaticamente. Esta remoção exige uma próxima versão major.
+
 ### Corrigido
+
+- Presença/BLF anuncia `Accept` PIDF/dialog-info e aguarda o primeiro NOTIFY antes de confirmar a assinatura. Rejeições e timeout de 32 s passam a gerar `subscription-failed`/`subscription-timeout`, em vez de sucesso falso. PIDF aceita namespaces XML e espaços em `basic`.
+
+- SIP.js: retomar a câmera depois de `downgradeToAudio()` recaptura vídeo no emissor já negociado, sem depender do cache de constraints nem reabrir o microfone.
+- JsSIP: `localElement` passa a exibir a câmera e acompanhar alterações de vídeo e tela.
+- Ambos os providers impedem seletores de tela simultâneos, liberam capturas quando `replaceTrack()` falha e encerram a câmera suspensa ao desligar durante compartilhamento.
 
 - JsSIP: o hold falhava atrás do dSIPRouter/Kamailio — o proxy reescreve o SDP do 200 OK e deixa o `Content-Length` 1 byte maior que o corpo, e o JsSIP descartava a resposta sem mandar o ACK. As mensagens recebidas agora têm o `Content-Length` recalculado (o provider SIP.js já fazia isso; a lógica virou `core/content-length.ts`, compartilhada).
 - JsSIP: `hold()`/`unhold()` só resolvem quando o PBX aceita o re-INVITE (antes resolviam ao enviar, e o app mostrava "em espera" sem confirmação); rejeitam com `session-terminated` se a chamada acabar antes. O JsSIP também passa a usar o `userAgentString`.

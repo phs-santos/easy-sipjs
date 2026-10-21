@@ -201,7 +201,14 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
         expect(rawSession.invite).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionDescriptionHandlerOptions: {
-                    constraints: { audio: true, video: true },
+                    constraints: {
+                        audio: expect.objectContaining({
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        }),
+                        video: true,
+                    },
                 },
             })
         );
@@ -231,7 +238,14 @@ describe("SipJSSession.upgradeToVideo / downgradeToAudio", () => {
         expect(rawSession.invite).toHaveBeenCalledWith(
             expect.objectContaining({
                 sessionDescriptionHandlerOptions: {
-                    constraints: { audio: true, video: false },
+                    constraints: {
+                        audio: expect.objectContaining({
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        }),
+                        video: false,
+                    },
                 },
             })
         );

@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionState } from "sip.js";
 import { SipJSSession } from "../src/core/sipjs-provider.js";
-import { JsSIPSession } from "../src/core/jssip-provider.js";
 
 function fakeTrack(kind: string) {
     return {
@@ -61,6 +60,10 @@ function sipJsAudioCall(accept = true) {
                 addTrack: (t: unknown) => localTracks.push(t),
                 removeTrack: (t: unknown) =>
                     localTracks.splice(localTracks.indexOf(t), 1),
+                getVideoTracks: () =>
+                    localTracks.filter(
+                        (t) => (t as { kind: string }).kind === "video"
+                    ),
                 getAudioTracks: () =>
                     localTracks.filter(
                         (t) => (t as { kind: string }).kind === "audio"
@@ -97,33 +100,6 @@ function sipJsAudioCall(accept = true) {
     };
 }
 
-function jsSipAudioCall(muted = false) {
-    const audio = sender(fakeTrack("audio"));
-    const senders: Array<ReturnType<typeof sender>> = [audio];
-    const pc = {
-        getSenders: () => senders,
-        addTrack: vi.fn((track: unknown) => {
-            const s = sender(track);
-            senders.push(s);
-            return s;
-        }),
-        removeTrack: vi.fn(),
-    };
-    const raw = {
-        id: "s1",
-        on: vi.fn(),
-        terminate: vi.fn(),
-        connection: pc,
-        isMuted: () => ({ audio: muted, video: false }),
-        isReadyToReOffer: vi.fn().mockReturnValue(true),
-        renegotiate: vi.fn((_o: unknown, done?: () => void) => {
-            done?.();
-            return true;
-        }),
-    };
-    return { session: new JsSIPSession(raw as any), raw, pc, audio };
-}
-
 afterEach(() => {
     vi.restoreAllMocks();
 });
@@ -137,7 +113,13 @@ describe("setAudioInput", () => {
 
         await session.setAudioInput("");
 
-        expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+        expect(getUserMedia).toHaveBeenCalledWith({
+            audio: expect.objectContaining({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            }),
+        });
     });
 
     it("SIP.js: troca com a chamada no mudo continua no mudo", async () => {
@@ -179,25 +161,14 @@ describe("setAudioInput", () => {
             expect.objectContaining({
                 sessionDescriptionHandlerOptions: {
                     constraints: {
-                        audio: { deviceId: { exact: "mic-2" } },
+                        audio: expect.objectContaining({
+                            deviceId: { exact: "mic-2" },
+                        }),
                         video: true,
                     },
                 },
             })
         );
-    });
-
-    it("JsSIP: id vazio volta ao padrão e o mudo é mantido", async () => {
-        const { session } = jsSipAudioCall(true);
-        const newTrack = fakeTrack("audio");
-        const getUserMedia = vi
-            .spyOn(navigator.mediaDevices, "getUserMedia")
-            .mockResolvedValue(streamOf(newTrack));
-
-        await session.setAudioInput("default");
-
-        expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
-        expect(newTrack.enabled).toBe(false);
     });
 });
 
@@ -236,19 +207,6 @@ describe("shareScreen numa chamada só de áudio", () => {
         expect(screen.stop).toHaveBeenCalled();
     });
 
-    it("JsSIP: adiciona a tela como vídeo e renegocia", async () => {
-        const { session, raw, pc } = jsSipAudioCall();
-        const screen = fakeTrack("video");
-        vi.spyOn(navigator.mediaDevices, "getDisplayMedia").mockResolvedValue(
-            streamOf(screen)
-        );
-
-        await session.shareScreen();
-
-        expect(pc.addTrack).toHaveBeenCalledWith(screen, expect.anything());
-        expect(raw.renegotiate).toHaveBeenCalledTimes(1);
-    });
-
     it("SIP.js: encerrar a chamada durante o compartilhamento para a captura", async () => {
         const { session } = sipJsAudioCall();
         const screen = fakeTrack("video");
@@ -261,4 +219,85 @@ describe("shareScreen numa chamada só de áudio", () => {
 
         expect(screen.stop).toHaveBeenCalled();
     });
+});
+
+describe("video lifecycle regression", () => {
+    it("SIP.js: liga a câmera novamente depois de só áudio sem recapturar o microfone", async () => {
+        const { session, senders, raw, audio, localTracks } = sipJsAudioCall();
+        const old = fakeTrack("video");
+        const video = sender(old);
+        senders.push(video);
+        localTracks.push(old);
+        const next = fakeTrack("video");
+        const capture = vi
+            .spyOn(navigator.mediaDevices, "getUserMedia")
+            .mockResolvedValue(streamOf(next));
+        await session.downgradeToAudio();
+        await session.upgradeToVideo();
+        expect(capture).toHaveBeenCalledWith({ video: true });
+        expect(video.track).toBe(next);
+        expect(audio.track).not.toBeNull();
+        expect(localTracks).toContain(next);
+        expect(localTracks).not.toContain(old);
+        expect(raw.invite).toHaveBeenCalledTimes(1);
+    });
+
+    it("SIP.js: libera a câmera se retomar o sender falhar e permite tentar de novo", async () => {
+        const { session, senders } = sipJsAudioCall();
+        const video = sender(fakeTrack("video"));
+        senders.push(video);
+        await session.downgradeToAudio();
+        const next = fakeTrack("video");
+        vi.spyOn(navigator.mediaDevices, "getUserMedia").mockResolvedValue(
+            streamOf(next)
+        );
+        video.replaceTrack.mockRejectedValueOnce(new Error("replace failed"));
+        await expect(session.upgradeToVideo()).rejects.toThrow(
+            "replace failed"
+        );
+        expect(next.stop).toHaveBeenCalled();
+        await session.upgradeToVideo();
+        expect(video.track).toBe(next);
+    });
+
+    for (const provider of ["SIP.js"]) {
+        it(`${provider}: libera a tela se substituir a câmera falhar`, async () => {
+            const call = sipJsAudioCall();
+            const camera = sender(fakeTrack("video"));
+            call.pc.getSenders().push(camera);
+            const screen = fakeTrack("video");
+            vi.spyOn(
+                navigator.mediaDevices,
+                "getDisplayMedia"
+            ).mockResolvedValue(streamOf(screen));
+            camera.replaceTrack.mockRejectedValueOnce(
+                new Error("replace failed")
+            );
+            await expect(call.session.shareScreen()).rejects.toThrow(
+                "replace failed"
+            );
+            expect(screen.stop).toHaveBeenCalled();
+        });
+
+        it(`${provider}: não abre duas capturas de tela enquanto o seletor está aberto`, async () => {
+            const call = sipJsAudioCall();
+            const screen = fakeTrack("video");
+            let finish!: (stream: MediaStream) => void;
+            const capture = vi
+                .spyOn(navigator.mediaDevices, "getDisplayMedia")
+                .mockReturnValue(
+                    new Promise((resolve) => {
+                        finish = resolve;
+                    })
+                );
+            const first = call.session.shareScreen();
+            await expect(call.session.shareScreen()).rejects.toThrow(
+                "already being selected"
+            );
+            finish(streamOf(screen));
+            await first;
+            expect(capture).toHaveBeenCalledTimes(1);
+            await call.session.stopScreenSharing();
+        });
+    }
 });

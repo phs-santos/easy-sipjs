@@ -77,3 +77,14 @@ describe("parsePresenceBody — PIDF", () => {
         expect(status("", type)).toBe("unknown");
     });
 });
+
+describe("PIDF com namespace", () => {
+    it("aceita prefixos XML e espaços no estado", () => {
+        expect(
+            status(
+                "<pidf:presence><pidf:tuple><pidf:status><pidf:basic> open </pidf:basic></pidf:status></pidf:tuple></pidf:presence>",
+                "application/pidf+xml"
+            )
+        ).toBe("available");
+    });
+});

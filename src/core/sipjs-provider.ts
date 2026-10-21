@@ -134,8 +134,10 @@ export class SipJSSession implements ISipSession {
     private remoteElement?: HTMLMediaElement;
     private originalVideoTrack?: MediaStreamTrack;
     private screenTrack?: MediaStreamTrack;
+    private screenCapturePending = false;
     /** Sender created by shareScreen() on a call that had no video; reused by later shares. */
     private screenSender?: RTCRtpSender;
+    private pausedVideoSender?: RTCRtpSender;
     /** Microphone picked with setAudioInput(), so later re-INVITEs that re-acquire media keep it. */
     private audioInputDeviceId?: string;
     private _muted = false;
@@ -287,11 +289,53 @@ export class SipJSSession implements ISipSession {
     async upgradeToVideo(): Promise<void> {
         if (this.session.state !== SessionState.Established) return;
         const pc = this.getPeerConnection();
-        if (pc?.getSenders().some((s) => s.track?.kind === "video")) return;
+        if (
+            pc
+                ?.getSenders()
+                .some(
+                    (s) =>
+                        s.track?.kind === "video" &&
+                        s.track.readyState !== "ended"
+                )
+        )
+            return;
 
         this.assertNoReinviteInProgress();
         this.reinviteInProgress = true;
         try {
+            // downgradeToAudio leaves the video m-line negotiated. sip.js caches the
+            // old constraints, so another video:true would NOT acquire a new camera.
+            // Resume the existing sender without touching the microphone or SDP.
+            if (this.pausedVideoSender) {
+                const sender = this.pausedVideoSender;
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                });
+                const track = stream.getVideoTracks()[0];
+                if (
+                    !track ||
+                    this.terminated ||
+                    this.getPeerConnection() !== pc
+                ) {
+                    stream.getTracks().forEach((t) => t.stop());
+                    throw new SipError(
+                        "media-unavailable",
+                        "Camera unavailable or session ended while enabling video."
+                    );
+                }
+                try {
+                    await sender.replaceTrack(track);
+                } catch (error) {
+                    stream.getTracks().forEach((t) => t.stop());
+                    throw error;
+                }
+                const local = this.getHandler()?.localMediaStream;
+                local?.getVideoTracks().forEach((t) => local.removeTrack(t));
+                local?.addTrack(track);
+                this.pausedVideoSender = undefined;
+                this.attachMedia();
+                return;
+            }
             // sip.js's default SessionDescriptionHandler acquires the camera itself and
             // adds the resulting track to the peer connection when `constraints.video`
             // flips to true on a re-INVITE — no manual getUserMedia/addTrack needed here.
@@ -334,6 +378,9 @@ export class SipJSSession implements ISipSession {
                     },
                 });
                 track.stop();
+                this.pausedVideoSender = sender;
+                const local = this.getHandler()?.localMediaStream;
+                local?.removeTrack(track);
             } catch (error) {
                 await sender.replaceTrack(track).catch(() => {});
                 throw error;
@@ -487,6 +534,21 @@ export class SipJSSession implements ISipSession {
      * microphone is left alone because the media constraints don't change.
      */
     async shareScreen(): Promise<void> {
+        if (this.screenCapturePending) {
+            throw new SipError(
+                "reinvite-in-progress",
+                "Screen capture is already being selected."
+            );
+        }
+        this.screenCapturePending = true;
+        try {
+            await this.startScreenSharing();
+        } finally {
+            this.screenCapturePending = false;
+        }
+    }
+
+    private async startScreenSharing(): Promise<void> {
         const pc = this.getPeerConnection();
         if (!pc || this.terminated)
             throw new Error("No active peer connection");
@@ -522,11 +584,22 @@ export class SipJSSession implements ISipSession {
         }
 
         if (cameraSender) {
-            this.originalVideoTrack = cameraSender.track ?? undefined;
-            await cameraSender.replaceTrack(track);
+            const original = cameraSender.track ?? undefined;
+            try {
+                await cameraSender.replaceTrack(track);
+            } catch (error) {
+                track.stop();
+                throw error;
+            }
+            this.originalVideoTrack = original;
         } else if (this.screenSender) {
             // The video stream from an earlier share is still negotiated: reuse it.
-            await this.screenSender.replaceTrack(track);
+            try {
+                await this.screenSender.replaceTrack(track);
+            } catch (error) {
+                track.stop();
+                throw error;
+            }
         } else {
             const localStream =
                 this.getHandler()?.localMediaStream ?? new MediaStream();
@@ -960,7 +1033,9 @@ export class SipJSSession implements ISipSession {
         if (this.screenTrack) this.screenTrack.onended = null;
         this.screenTrack?.stop();
         this.screenTrack = undefined;
+        this.originalVideoTrack?.stop();
         this.screenSender = undefined;
+        this.pausedVideoSender = undefined;
         this.originalVideoTrack = undefined;
         releaseElement(this.remoteElement);
         releaseElement(this.localElement);
@@ -1262,41 +1337,105 @@ export class SipJSProvider implements ISipProvider {
                 `Invalid presence target URI: ${target}`
             );
 
-        const key = `${options.event ?? "presence"}:${uri.toString()}`;
+        const event = options.event ?? "presence";
+        const key = `${event}:${uri.toString()}`;
         await this.unsubscribePresence(key);
-
-        const subscriber = new Subscriber(
-            this.userAgent,
-            uri,
-            options.event ?? "presence",
-            {
-                expires: options.expires ?? 3600,
-                extraHeaders: options.extraHeaders,
-            }
-        );
-
-        subscriber.delegate = {
-            onNotify: (notification) => {
-                notification.accept().catch(() => {});
-                const presence = this.parsePresenceNotification(
-                    target,
-                    notification
-                );
-                this.onUserAgent?.onPresence?.(presence);
-            },
-        };
-
-        subscriber.stateChange.addListener((state) => {
-            if (
-                state === SubscriptionState.Terminated &&
-                this.subscribers.get(key) === subscriber
-            ) {
-                this.subscribers.delete(key);
-            }
+        const extraHeaders = [...(options.extraHeaders ?? [])];
+        if (!extraHeaders.some((header) => /^accept\s*:/i.test(header))) {
+            extraHeaders.push(
+                `Accept: ${event === "dialog" ? "application/dialog-info+xml" : "application/pidf+xml"}`
+            );
+        }
+        const subscriber = new Subscriber(this.userAgent, uri, event, {
+            expires: options.expires ?? 3600,
+            extraHeaders,
         });
-
         this.subscribers.set(key, subscriber);
-        await subscriber.subscribe();
+
+        // Subscriber.subscribe() resolves when sending, not on server acceptance.
+        // RFC 6665 confirms a subscription with its first NOTIFY, even before 200 OK.
+        await new Promise<void>((resolve, reject) => {
+            let confirmed = false;
+            let settled = false;
+            const finish = (error?: Error) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                if (error) reject(error);
+                else resolve();
+            };
+            const timeout = setTimeout(() => {
+                if (this.subscribers.get(key) === subscriber)
+                    this.subscribers.delete(key);
+                finish(
+                    new SipError(
+                        "subscription-timeout",
+                        `No NOTIFY received for ${event}:${target}. Check SUBSCRIBE routing and PBX hints/subscribecontext.`
+                    )
+                );
+                void subscriber.dispose().catch(() => {});
+            }, 32000);
+
+            subscriber.delegate = {
+                onNotify: (notification) => {
+                    void notification.accept().catch(() => {});
+                    const state =
+                        notification.request.getHeader("Subscription-State") ??
+                        "";
+                    if (/^terminated\b/i.test(state)) {
+                        finish(
+                            new SipError(
+                                "subscription-failed",
+                                `Subscription ${event}:${target} terminated: ${state}`
+                            )
+                        );
+                        if (this.subscribers.get(key) === subscriber)
+                            this.subscribers.delete(key);
+                        this.onUserAgent?.onPresence?.({
+                            target,
+                            extension: target
+                                .replace(/^sips?:/i, "")
+                                .split("@")[0],
+                            status: "unknown",
+                            note: state,
+                        });
+                        return;
+                    }
+                    confirmed = true;
+                    this.onUserAgent?.onPresence?.(
+                        this.parsePresenceNotification(target, notification)
+                    );
+                    finish();
+                },
+            };
+            subscriber.stateChange.addListener((state) => {
+                if (state !== SubscriptionState.Terminated) return;
+                finish(
+                    new SipError(
+                        "subscription-failed",
+                        `Subscription ${event}:${target} failed before NOTIFY. Check the SIP response (403/404/489) and the PBX hints/subscribecontext.`
+                    )
+                );
+                if (this.subscribers.get(key) === subscriber) {
+                    this.subscribers.delete(key);
+                    if (confirmed)
+                        this.onUserAgent?.onPresence?.({
+                            target,
+                            extension: target
+                                .replace(/^sips?:/i, "")
+                                .split("@")[0],
+                            status: "unknown",
+                            note: "Subscription terminated; subscribe again.",
+                        });
+                }
+            });
+            subscriber.subscribe().catch((error) => {
+                if (this.subscribers.get(key) === subscriber)
+                    this.subscribers.delete(key);
+                finish(error);
+                void subscriber.dispose().catch(() => {});
+            });
+        });
     }
 
     /** `target` is an extension/URI (every event package subscribed for it) or an exact `event:uri` key. */

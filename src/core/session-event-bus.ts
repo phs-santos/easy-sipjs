@@ -6,7 +6,7 @@ export type SessionListener<K extends keyof SipSessionEventMap> = (
 
 /**
  * Shared session-level event bus used by every provider so `ISipSession.on/off`
- * behaves identically regardless of which underlying SIP stack (sip.js or JsSIP)
+ * behaves identically across built-in and custom providers
  * is active.
  */
 export class SessionEventBus {
